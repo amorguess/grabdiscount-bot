@@ -35,9 +35,23 @@ def run_scraper():
     except Exception as e:
         print(f"[SCRAPER] Erreur: {e}", flush=True)
 
+def run_restaurant_scraper():
+    try:
+        import restaurant_scraper
+        import schedule, time
+        print("[RESTAURANTS] Premier scan au démarrage...", flush=True)
+        restaurant_scraper.run_once()
+        schedule.every(24).hours.do(restaurant_scraper.run_once)
+        while True:
+            schedule.run_pending()
+            time.sleep(60)
+    except Exception as e:
+        print(f"[RESTAURANTS] Erreur: {e}", flush=True)
+
 print(f"[start] HTTP health check sur port {PORT}", flush=True)
 
 threading.Thread(target=run_scraper, daemon=True).start()
+threading.Thread(target=run_restaurant_scraper, daemon=True).start()
 threading.Thread(target=run_bot, daemon=True).start()
 
 # HTTP server bloquant en dernier (satisfait Render)

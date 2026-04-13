@@ -734,39 +734,82 @@ function buildCats(gridId, onClickFn){
   });
 }
 
-// ── RESTOS ──
-const RESTOS = [
-  {icon:'🍜',name:'Thai Street Kitchen',rating:'4.8',time:'25-35',tags:['Thai','Soupe'],color:'#E8F8EF'},
-  {icon:'🍣',name:'Sushi Tokyo Express',rating:'4.7',time:'30-40',tags:['Japonais','Sushi'],color:'#FEF3C7'},
-  {icon:'🍔',name:'Burgers Bangkok',rating:'4.6',time:'20-30',tags:['Burgers','Fast Food'],color:'#FEE2E2'},
-  {icon:'🥗',name:'Green Bowl Healthy',rating:'4.9',time:'15-25',tags:['Healthy','Végé'],color:'#E0F2FE'},
-  {icon:'🍕',name:'Pizza Milano',rating:'4.5',time:'25-35',tags:['Pizza','Italien'],color:'#FFF0E0'},
-  {icon:'🧋',name:'Bubble Tea House',rating:'4.8',time:'10-20',tags:['Drinks','Bubble Tea'],color:'#F3E8FF'},
-];
+// ── RESTOS (real data from restaurants.json) ──
+let ALL_RESTAURANTS = [];
+const CUISINE_ICONS = {
+  'Thai':['🍜'],'Japanese':['🍣'],'Korean':['🫕'],'Chinese':['🥟'],
+  'Burger':['🍔'],'Western':['🍔'],'Pizza':['🍕'],'Italian':['🍝'],
+  'Indian':['🍛'],'Healthy':['🥗'],'Fast Food':['🍟'],'Seafood':['🦐'],
+  'BBQ':['🥩'],'Fried Chicken':['🍤'],'Ramen':['🍜'],'Noodle':['🍜'],
+  'Rice Bowl':['🍚'],'Rice':['🍚'],'Dessert':['🍰'],'Cake':['🎂'],
+  'Coffee':['☕'],'Beverage':['🥤'],'Milk Tea':['🧋'],'Bubble Tea':['🧋'],
+  'Breakfast':['🍳'],'Sandwich':['🥙'],'Sushi':['🍱'],'Dim Sum':['🍢'],
+  'Smoothie':['🥤'],'Tea':['🍵'],'Chocolate':['🍫'],'Fruit':['🍓'],
+  'Soup':['🍲'],'Vietnamese':['🐟'],'Steak':['🥩'],'Bento':['🍱'],
+};
 
-function buildRestos(){
+function cuisineIcon(cuisines){
+  if(!cuisines || !cuisines.length) return '🍽️';
+  for(const c of cuisines){
+    for(const [k,v] of Object.entries(CUISINE_ICONS)){
+      if(c.toLowerCase().includes(k.toLowerCase())) return v[0];
+    }
+  }
+  return '🍽️';
+}
+
+function buildRestos(filter){
   const list = document.getElementById('homeRestos');
   list.innerHTML = '';
-  RESTOS.forEach(r => {
+
+  let restos = ALL_RESTAURANTS.length ? ALL_RESTAURANTS : [];
+
+  // Filter by cuisine if selected
+  if(filter){
+    const fl = filter.toLowerCase();
+    const filtered = restos.filter(r =>
+      r.cuisine.some(c => c.toLowerCase().includes(fl) || fl.includes(c.toLowerCase()))
+    );
+    restos = filtered.length ? filtered : restos; // fallback to all if no match
+  }
+
+  // Show up to 12 restaurants (shuffle for variety)
+  const shown = restos.slice().sort(()=>Math.random()-.5).slice(0,12);
+
+  if(!shown.length){
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:#9CA3AF">Loading restaurants…</div>';
+    return;
+  }
+
+  const BG_COLORS = ['#E8F8EF','#FEF3C7','#FEE2E2','#E0F2FE','#FFF0E0','#F3E8FF','#FFF9C4','#FCE4EC'];
+
+  shown.forEach((r, i) => {
     const el = document.createElement('div');
     el.className = 'resto-card';
+    const icon = cuisineIcon(r.cuisine);
+    const tags = r.cuisine.slice(0,2);
+    const bg = BG_COLORS[i % BG_COLORS.length];
+    const img = r.photo ?
+      `<img src="${r.photo}" style="width:100%;height:100%;object-fit:cover;border-radius:10px" onerror="this.parentNode.innerHTML='${icon}';this.parentNode.style.fontSize='26px';this.parentNode.style.display='flex';this.parentNode.style.alignItems='center';this.parentNode.style.justifyContent='center'">` :
+      icon;
+
     el.innerHTML = `
-      <div class="rc-img" style="background:${r.color}">${r.icon}</div>
+      <div class="rc-img" style="background:${r.photo?'#f0f0f0':bg};${r.photo?'':'font-size:26px;display:flex;align-items:center;justify-content:center'};overflow:hidden">${img}</div>
       <div class="rc-body">
         <div class="rc-name">${r.name}</div>
         <div class="rc-meta">
-          <span><span class="rc-star">⭐</span>${r.rating}</span>
-          <span>🕐 ${r.time} min</span>
+          <span>⭐ 4.${5+Math.floor(Math.random()*5)}</span>
+          <span>🕐 ${20+Math.floor(Math.random()*25)}-${35+Math.floor(Math.random()*15)} min</span>
           <span>🛵 Free</span>
         </div>
         <div class="rc-tags">
-          ${r.tags.map(t=>`<span class="rc-tag">${t}</span>`).join('')}
+          ${tags.map(t=>`<span class="rc-tag">${t}</span>`).join('')}
           <span class="rc-promo">-50% off</span>
         </div>
       </div>
       <div class="rc-right">
         <div class="rc-discount">-50%</div>
-        <div class="rc-time">${r.time}min</div>
+        <div class="rc-time">${20+Math.floor(Math.random()*20)}min</div>
       </div>`;
     el.onclick = () => goTo(1);
     list.appendChild(el);
@@ -849,12 +892,31 @@ function confirmPaid(){
 applyT();
 buildRestos();
 
+// Load real restaurants
+fetch('../restaurants.json')
+  .then(r=>r.json())
+  .then(data=>{
+    ALL_RESTAURANTS = data.restaurants || [];
+    buildRestos(); // refresh with real data
+  })
+  .catch(()=>{ /* keep placeholder */ });
+
+function initCuisines(){
+  buildCats('homeCats', (c,el,id)=>{
+    // Filter restaurants by this cuisine, don't navigate
+    const filter = c.en || c.fr;
+    buildRestos(filter);
+    // Scroll restaurant list into view
+    document.getElementById('homeRestos').scrollIntoView({behavior:'smooth',block:'nearest'});
+  });
+  buildCats('orderCats', (c,el,id)=>selectCuisine(c,el,id));
+}
+
 fetch('../cuisines.json')
   .then(r=>r.json())
   .then(data=>{
     CUISINES = data.cuisines;
-    buildCats('homeCats', (c,el,id)=>goTo(1));
-    buildCats('orderCats', (c,el,id)=>selectCuisine(c,el,id));
+    initCuisines();
   })
   .catch(()=>{
     CUISINES=[
@@ -865,8 +927,7 @@ fetch('../cuisines.json')
       {icon:'🍗',fr:'Poulet frit',en:'Fried Chicken'},{icon:'🍣',fr:'Sushi',en:'Sushi'},
       {icon:'🍚',fr:'Rice Bowl',en:'Rice Bowl'},{icon:'☕',fr:'Café',en:'Coffee'},
     ];
-    buildCats('homeCats', (c,el,id)=>goTo(1));
-    buildCats('orderCats', (c,el,id)=>selectCuisine(c,el,id));
+    initCuisines();
   });
 </script>
 </body>
