@@ -8,292 +8,399 @@
   <style>
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
     :root{
-      --green:#00B14F;--green2:#009940;--green3:#E8F8EF;
-      --red:#FF4F4F;--yellow:#FFB800;
-      --bg:#F7F8FA;--white:#fff;
+      --green:#00B14F;--green2:#009940;
+      --teal-start:#1DB954;--teal-end:#0ABFBC;
+      --bg:#F5F5F5;--white:#fff;
       --text:#1A1A1A;--sub:#6B7280;--muted:#9CA3AF;
-      --border:#F0F0F0;--shadow:0 2px 12px rgba(0,0,0,.08);
-      --r:14px;--r-sm:10px;
+      --border:#EBEBEB;
+      --r:16px;--r-sm:10px;
     }
-    html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;overflow-x:hidden}
+    html,body{
+      height:100%;
+      background:var(--bg);
+      color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      font-size:14px;
+      overflow-x:hidden;
+    }
 
-    /* ── SCREENS ─────────────────────────────── */
-    .screen{display:none;flex-direction:column;min-height:100vh;animation:fadeUp .28s ease both}
+    /* ── SCREENS ── */
+    .screen{display:none;flex-direction:column;min-height:100vh;animation:fadeUp .25s ease both}
     .screen.active{display:flex}
-    @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 
-    /* ── STATUS BAR MOCK ─────────────────────── */
-    .statusbar{height:env(safe-area-inset-top,0px)}
-
-    /* ── TOP NAV ─────────────────────────────── */
-    .topnav{
+    /* ── GRAB HEADER GRADIENT ── */
+    .grab-header{
+      background:linear-gradient(160deg,#1DB954 0%,#0ABFBC 100%);
+      padding:14px 16px 20px;
+      padding-top:calc(14px + env(safe-area-inset-top));
+    }
+    .deliver-row{
+      display:flex;align-items:center;justify-content:space-between;
+      margin-bottom:14px;
+    }
+    .deliver-left{display:flex;align-items:center;gap:8px}
+    .back-btn{
+      background:rgba(255,255,255,.25);
+      border:none;border-radius:50%;
+      width:34px;height:34px;
+      display:flex;align-items:center;justify-content:center;
+      color:#fff;font-size:18px;cursor:pointer;
+    }
+    .deliver-info{}
+    .deliver-label{color:rgba(255,255,255,.8);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+    .deliver-addr{
+      color:#fff;font-size:15px;font-weight:700;
+      display:flex;align-items:center;gap:4px;
+    }
+    .deliver-addr .chevron{font-size:12px;opacity:.8}
+    .header-icons{display:flex;gap:10px}
+    .hicon{
+      width:36px;height:36px;border-radius:50%;
+      background:rgba(255,255,255,.25);
+      display:flex;align-items:center;justify-content:center;
+      font-size:16px;
+    }
+    /* Search bar */
+    .grab-search{
+      background:#fff;
+      border-radius:14px;
       display:flex;align-items:center;gap:10px;
-      background:var(--white);padding:14px 16px 12px;
+      padding:11px 14px;
+      box-shadow:0 2px 12px rgba(0,0,0,.12);
+    }
+    .grab-search .gs-icon{color:#9CA3AF;font-size:16px}
+    .grab-search span{color:#9CA3AF;font-size:14px;flex:1}
+    .grab-search .gs-mic{color:#9CA3AF;font-size:16px}
+
+    /* ── TABS ── */
+    .grab-tabs{
+      background:#fff;
+      display:flex;gap:0;
+      padding:0 16px;
       border-bottom:1px solid var(--border);
       position:sticky;top:0;z-index:50;
     }
-    .topnav .back{
-      width:34px;height:34px;border-radius:50%;
-      background:var(--bg);display:flex;align-items:center;justify-content:center;
-      font-size:18px;cursor:pointer;flex-shrink:0;border:none;
+    .gtab{
+      padding:12px 14px;font-size:14px;font-weight:600;
+      color:var(--sub);border-bottom:3px solid transparent;
+      display:flex;align-items:center;gap:6px;cursor:pointer;
+      white-space:nowrap;
     }
-    .topnav h2{flex:1;font-size:16px;font-weight:700}
-    .topnav .step-pill{
-      background:var(--green3);color:var(--green);
-      font-size:12px;font-weight:700;
-      padding:4px 10px;border-radius:20px;flex-shrink:0;
-    }
-
-    /* ── SCROLL AREA ─────────────────────────── */
-    .scroll{flex:1;overflow-y:auto;padding-bottom:100px}
-
-    /* ── GRAB HOME HEADER ───────────────────── */
-    .home-header{
-      background:var(--green);padding:16px 16px 20px;
-      position:relative;overflow:hidden;
-    }
-    .home-header::after{
-      content:'';position:absolute;right:-20px;bottom:-30px;
-      width:150px;height:150px;border-radius:50%;
-      background:rgba(255,255,255,.08);
-    }
-    .home-header .location-row{
-      display:flex;align-items:center;gap:6px;
-      color:rgba(255,255,255,.85);font-size:12px;margin-bottom:4px;
-    }
-    .home-header .location-row .pin{font-size:14px}
-    .home-header h1{color:#fff;font-size:22px;font-weight:800;margin-bottom:14px;line-height:1.2}
-    .home-header h1 span{color:var(--yellow)}
-    .search-bar{
-      display:flex;align-items:center;gap:8px;
-      background:#fff;border-radius:12px;padding:10px 14px;
-      box-shadow:0 2px 8px rgba(0,0,0,.12);
-    }
-    .search-bar .s-icon{color:var(--muted);font-size:16px}
-    .search-bar span{color:var(--muted);font-size:14px;flex:1}
-    .search-bar .s-badge{
-      background:var(--green3);color:var(--green);
-      font-size:11px;font-weight:700;padding:3px 8px;border-radius:8px;
+    .gtab.active{color:var(--green);border-bottom-color:var(--green)}
+    .gtab .tab-dot{
+      width:18px;height:18px;border-radius:50%;
+      background:var(--bg);
+      display:flex;align-items:center;justify-content:center;
+      font-size:10px;
     }
 
-    /* ── PROMO BANNER ────────────────────────── */
-    .promo-banner{
-      margin:16px 16px 0;
-      background:linear-gradient(135deg,#00B14F 0%,#009940 100%);
-      border-radius:16px;padding:16px;
-      display:flex;align-items:center;gap:12px;
-      position:relative;overflow:hidden;
-    }
-    .promo-banner::before{
-      content:'';position:absolute;right:-20px;top:-20px;
-      width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,.1);
-    }
-    .promo-left{flex:1}
-    .promo-tag{
-      background:var(--yellow);color:#111;
-      font-size:10px;font-weight:800;
-      padding:2px 8px;border-radius:6px;
-      display:inline-block;margin-bottom:6px;
-      text-transform:uppercase;letter-spacing:.04em;
-    }
-    .promo-banner h3{color:#fff;font-size:18px;font-weight:800;line-height:1.2;margin-bottom:3px}
-    .promo-banner p{color:rgba(255,255,255,.85);font-size:12px}
-    .promo-emoji{font-size:48px;line-height:1}
+    /* ── SCROLL AREA ── */
+    .scroll-area{flex:1;overflow-y:auto;padding-bottom:90px}
 
-    /* ── SECTION ─────────────────────────────── */
-    .section{padding:20px 16px 0}
-    .section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-    .section-head h3{font-size:16px;font-weight:700}
-    .section-head a{color:var(--green);font-size:13px;font-weight:600;text-decoration:none}
-
-    /* ── BUDGET CARDS ────────────────────────── */
-    .budget-cards{display:flex;gap:12px}
-    .budget-card{
-      flex:1;background:var(--white);border-radius:16px;
-      padding:16px;cursor:pointer;border:2px solid var(--border);
-      transition:border-color .2s,transform .15s;
-      box-shadow:var(--shadow);
-    }
-    .budget-card:active{transform:scale(.97)}
-    .budget-card.selected{border-color:var(--green);background:var(--green3)}
-    .budget-card .bc-icon{font-size:32px;margin-bottom:8px}
-    .budget-card .bc-budget{font-size:18px;font-weight:800;color:var(--text)}
-    .budget-card .bc-label{font-size:11px;color:var(--sub);margin:2px 0 8px}
-    .budget-card .bc-price{
-      background:var(--green);color:#fff;
-      font-size:14px;font-weight:700;
-      padding:6px 0;border-radius:8px;text-align:center;
-    }
-    .budget-card.selected .bc-price{background:var(--green2)}
-
-    /* ── CUISINE SCROLL ──────────────────────── */
-    .cuisine-scroll{
-      display:flex;gap:10px;overflow-x:auto;padding:0 16px 4px;
+    /* ── CATEGORIES SCROLL ── */
+    .cats-scroll{
+      display:flex;gap:8px;overflow-x:auto;
+      padding:16px 16px 8px;
       scrollbar-width:none;-ms-overflow-style:none;
+      background:#fff;
     }
-    .cuisine-scroll::-webkit-scrollbar{display:none}
-    .cuis-pill{
+    .cats-scroll::-webkit-scrollbar{display:none}
+    .cat-item{
       display:flex;flex-direction:column;align-items:center;gap:6px;
       flex-shrink:0;cursor:pointer;
     }
-    .cuis-icon{
-      width:64px;height:64px;border-radius:16px;
-      background:var(--white);border:2px solid var(--border);
+    .cat-img{
+      width:68px;height:68px;border-radius:50%;
+      background:var(--bg);
+      overflow:hidden;
       display:flex;align-items:center;justify-content:center;
-      font-size:30px;transition:border-color .2s,transform .15s;
-      box-shadow:var(--shadow);
-    }
-    .cuis-pill:active .cuis-icon{transform:scale(.93)}
-    .cuis-pill.selected .cuis-icon{border-color:var(--green);background:var(--green3)}
-    .cuis-name{font-size:11px;font-weight:600;color:var(--sub);white-space:nowrap}
-    .cuis-pill.selected .cuis-name{color:var(--green)}
-
-    /* ── RESTO CARDS ─────────────────────────── */
-    .resto-list{display:flex;flex-direction:column;gap:12px;padding:0 16px}
-    .resto-card{
-      background:var(--white);border-radius:16px;overflow:hidden;
-      box-shadow:var(--shadow);cursor:pointer;border:2px solid transparent;
+      font-size:36px;
+      border:2px solid transparent;
       transition:border-color .2s,transform .15s;
     }
-    .resto-card:active{transform:scale(.98)}
-    .resto-card.selected{border-color:var(--green)}
-    .resto-img{
-      width:100%;height:120px;object-fit:cover;
+    .cat-item:active .cat-img{transform:scale(.93)}
+    .cat-item.selected .cat-img{border-color:var(--green)}
+    .cat-name{
+      font-size:11px;font-weight:500;color:var(--text);
+      text-align:center;max-width:68px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .cat-item.selected .cat-name{color:var(--green);font-weight:700}
+
+    /* ── PROMO CARDS ROW ── */
+    .promo-row{
+      display:flex;gap:10px;overflow-x:auto;
+      padding:14px 16px 4px;
+      scrollbar-width:none;
+      background:#fff;
+      border-top:8px solid var(--bg);
+    }
+    .promo-row::-webkit-scrollbar{display:none}
+    .promo-card{
+      flex-shrink:0;
+      width:160px;height:88px;
+      border-radius:14px;overflow:hidden;
+      background:linear-gradient(135deg,#1DB954,#0ABFBC);
+      position:relative;cursor:pointer;
+    }
+    .promo-card:active{opacity:.85}
+    .promo-card-img{
+      width:100%;height:100%;
+      display:flex;align-items:center;justify-content:center;
+      font-size:48px;
+    }
+    .promo-card-label{
+      position:absolute;bottom:0;left:0;right:0;
+      background:linear-gradient(transparent,rgba(0,0,0,.55));
+      padding:20px 10px 8px;
+      color:#fff;font-size:11px;font-weight:700;line-height:1.2;
+    }
+    .promo-card-badge{
+      position:absolute;top:8px;right:8px;
+      background:var(--green);color:#fff;
+      font-size:9px;font-weight:800;
+      padding:2px 6px;border-radius:6px;
+    }
+
+    /* ── SECTION HEADER ── */
+    .sec-head{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:16px 16px 10px;background:#fff;
+      border-top:8px solid var(--bg);
+    }
+    .sec-head h3{font-size:17px;font-weight:800}
+    .sec-head .see-all{
+      display:flex;align-items:center;gap:4px;
+      color:var(--sub);font-size:13px;
+    }
+    .see-all-circle{
+      width:22px;height:22px;border-radius:50%;
+      background:var(--bg);
+      display:flex;align-items:center;justify-content:center;
+      font-size:11px;
+    }
+
+    /* ── RESTO CARD (horizontal) ── */
+    .resto-list{
+      background:#fff;
+      display:flex;flex-direction:column;
+    }
+    .resto-card{
+      display:flex;gap:0;
+      padding:12px 16px;
+      border-bottom:1px solid var(--border);
+      cursor:pointer;
+      transition:background .15s;
+    }
+    .resto-card:active{background:#F9F9F9}
+    .resto-card.selected{background:#F0FFF7}
+    .rc-img{
+      width:80px;height:80px;border-radius:14px;
+      flex-shrink:0;overflow:hidden;
+      background:linear-gradient(135deg,#e8f8ef,#d4f0e2);
+      display:flex;align-items:center;justify-content:center;
+      font-size:38px;margin-right:12px;
+    }
+    .rc-body{flex:1;min-width:0}
+    .rc-name{font-size:15px;font-weight:700;margin-bottom:4px}
+    .rc-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+    .rc-meta span{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:2px}
+    .rc-star{color:#FFB800}
+    .rc-tags{display:flex;gap:6px;flex-wrap:wrap}
+    .rc-tag{
+      background:var(--bg);color:var(--sub);
+      font-size:11px;padding:2px 8px;border-radius:6px;
+    }
+    .rc-promo{
+      background:#FFF0F0;color:#E53935;
+      font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;
+    }
+    .rc-right{
+      display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between;
+      flex-shrink:0;margin-left:8px;
+    }
+    .rc-discount{
+      background:var(--green);color:#fff;
+      font-size:11px;font-weight:800;
+      padding:3px 8px;border-radius:8px;
+    }
+    .rc-time{font-size:11px;color:var(--sub);margin-top:4px}
+
+    /* ── ORDER SCREEN ── */
+    .order-header{
+      background:#fff;
+      border-bottom:1px solid var(--border);
+      padding:14px 16px;
+      display:flex;align-items:center;gap:10px;
+      position:sticky;top:0;z-index:50;
+    }
+    .order-header h2{font-size:16px;font-weight:700;flex:1}
+    .step-badge{
+      background:var(--bg);color:var(--sub);
+      font-size:12px;font-weight:700;
+      padding:4px 10px;border-radius:20px;
+    }
+    .prog-bar{height:3px;background:var(--border)}
+    .prog-fill{height:100%;background:var(--green);transition:width .4s}
+
+    /* Budget cards Grab style */
+    .budget-section{padding:20px 16px}
+    .budget-title{font-size:16px;font-weight:700;margin-bottom:14px}
+    .budget-grid{display:flex;flex-direction:column;gap:10px}
+    .bcard{
+      background:#fff;border-radius:16px;
+      border:2px solid var(--border);
+      padding:14px;
+      display:flex;align-items:center;gap:14px;
+      cursor:pointer;transition:border-color .2s;
+      box-shadow:0 1px 4px rgba(0,0,0,.06);
+    }
+    .bcard:active{transform:scale(.98)}
+    .bcard.selected{border-color:var(--green);background:#F0FFF7}
+    .bcard-icon{
+      width:54px;height:54px;border-radius:14px;
       background:linear-gradient(135deg,#e8f8ef,#c8f0dc);
       display:flex;align-items:center;justify-content:center;
-      font-size:52px;
+      font-size:28px;flex-shrink:0;
     }
-    .resto-body{padding:12px}
-    .resto-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
-    .resto-name{font-size:15px;font-weight:700}
-    .resto-badge{
-      background:var(--green);color:#fff;
-      font-size:10px;font-weight:700;
-      padding:2px 7px;border-radius:6px;flex-shrink:0;
+    .bcard.selected .bcard-icon{background:linear-gradient(135deg,#c8f0dc,#a8e6c8)}
+    .bcard-info{flex:1}
+    .bcard-title{font-size:16px;font-weight:800}
+    .bcard-sub{font-size:13px;color:var(--sub);margin-top:2px}
+    .bcard-right{text-align:right}
+    .bcard-price{
+      font-size:18px;font-weight:800;color:var(--green);
     }
-    .resto-meta{display:flex;align-items:center;gap:12px;margin-top:6px}
-    .resto-meta span{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--sub)}
-    .resto-meta .star{color:var(--yellow)}
-    .resto-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-    .resto-tag{
-      background:var(--bg);color:var(--sub);
-      font-size:11px;padding:3px 8px;border-radius:6px;
+    .bcard-save{
+      font-size:11px;color:#fff;background:var(--green);
+      padding:2px 7px;border-radius:6px;display:inline-block;margin-top:3px;
+    }
+    .tip-box{
+      background:#FFF9EC;border-left:3px solid #FFB800;
+      border-radius:0 12px 12px 0;padding:12px 14px;
+      font-size:13px;color:#92620A;margin-top:16px;line-height:1.5;
     }
 
-    /* ── ORDER SCREEN ────────────────────────── */
+    /* Upload zone Grab style */
+    .upload-section{padding:16px}
+    .upload-label{font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
     .upload-zone{
-      margin:16px;
-      border:2px dashed #D1D5DB;
-      border-radius:16px;padding:28px 16px;
-      text-align:center;background:var(--white);cursor:pointer;
-      transition:border-color .2s;
+      background:#fff;border:2px dashed #D1D5DB;border-radius:16px;
+      padding:28px 16px;text-align:center;cursor:pointer;
     }
-    .upload-zone.has-photo{border-style:solid;border-color:var(--green);padding:0;overflow:hidden}
+    .upload-zone.filled{border-style:solid;border-color:var(--green);padding:0;overflow:hidden}
     .upload-zone img{width:100%;border-radius:14px;display:block}
-    .upload-zone .uz-icon{font-size:38px;margin-bottom:8px}
-    .upload-zone .uz-t{font-size:15px;font-weight:700;margin-bottom:4px}
-    .upload-zone .uz-s{font-size:12px;color:var(--sub)}
+    .uz-icon{font-size:36px;margin-bottom:8px}
+    .uz-title{font-size:15px;font-weight:700;margin-bottom:4px}
+    .uz-sub{font-size:12px;color:var(--sub)}
 
-    .or-divider{
+    .or-line{
       display:flex;align-items:center;gap:10px;
-      padding:0 16px;margin:4px 0;
+      padding:6px 16px;
     }
-    .or-divider::before,.or-divider::after{content:'';flex:1;height:1px;background:var(--border)}
-    .or-divider span{font-size:12px;color:var(--muted);white-space:nowrap}
+    .or-line::before,.or-line::after{content:'';flex:1;height:1px;background:var(--border)}
+    .or-line span{font-size:12px;color:var(--muted)}
 
-    .field{padding:0 16px;margin-bottom:12px}
-    .field label{display:block;font-size:12px;font-weight:600;color:var(--sub);margin-bottom:5px}
+    .field{padding:0 16px 14px}
+    .field label{display:block;font-size:12px;font-weight:700;color:var(--sub);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
     .field input,.field textarea{
-      width:100%;background:var(--white);
-      border:1.5px solid var(--border);
-      border-radius:12px;padding:12px 14px;
-      font-size:14px;color:var(--text);outline:none;
-      transition:border-color .2s;-webkit-appearance:none;
+      width:100%;background:#fff;
+      border:1.5px solid var(--border);border-radius:12px;
+      padding:12px 14px;font-size:14px;color:var(--text);
+      outline:none;transition:border-color .2s;-webkit-appearance:none;
     }
     .field input:focus,.field textarea:focus{border-color:var(--green)}
     .field textarea{min-height:80px;resize:none}
     ::placeholder{color:var(--muted)}
 
-    /* ── CHECKOUT ────────────────────────────── */
-    .checkout-header{
-      background:var(--green);padding:20px 16px 24px;
-      border-radius:0 0 24px 24px;
-      margin-bottom:-8px;
+    /* ── CHECKOUT ── */
+    .checkout-hero{
+      background:linear-gradient(160deg,#1DB954 0%,#0ABFBC 100%);
+      padding:20px 16px 28px;border-radius:0 0 28px 28px;
     }
-    .checkout-header p{color:rgba(255,255,255,.8);font-size:12px;margin-bottom:2px}
-    .checkout-header .big-amount{color:#fff;font-size:42px;font-weight:800;line-height:1}
-    .checkout-header .big-amount span{font-size:20px;font-weight:600}
+    .checkout-hero .ch-label{color:rgba(255,255,255,.8);font-size:12px;margin-bottom:4px}
+    .checkout-hero .ch-amount{color:#fff;font-size:44px;font-weight:800;line-height:1}
+    .checkout-hero .ch-thb{font-size:22px;font-weight:600}
 
     .summary-card{
-      background:var(--white);border-radius:16px;margin:16px;
-      overflow:hidden;box-shadow:var(--shadow);
+      background:#fff;border-radius:16px;margin:14px 16px;
+      overflow:hidden;box-shadow:0 1px 8px rgba(0,0,0,.07);
     }
-    .summary-row{
+    .sum-row{
       display:flex;justify-content:space-between;align-items:center;
       padding:12px 16px;border-bottom:1px solid var(--border);
     }
-    .summary-row:last-child{border-bottom:none}
-    .summary-row .sr-label{font-size:13px;color:var(--sub)}
-    .summary-row .sr-val{font-size:14px;font-weight:600;color:var(--text)}
-    .summary-row .sr-val.green{color:var(--green)}
-    .summary-row .sr-val.big{font-size:18px;font-weight:800}
+    .sum-row:last-child{border-bottom:none}
+    .sum-row .sl{font-size:13px;color:var(--sub)}
+    .sum-row .sv{font-size:14px;font-weight:600}
+    .sum-row .sv.green{color:var(--green)}
+    .sum-row .sv.big{font-size:18px;font-weight:800}
+    .sum-row.total-row{background:#F8FFF9}
 
-    .how-to{margin:0 16px 16px;background:var(--white);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
-    .how-to-title{padding:14px 16px 10px;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.06em}
+    .how-card{
+      background:#fff;border-radius:16px;margin:0 16px 16px;
+      overflow:hidden;box-shadow:0 1px 8px rgba(0,0,0,.07);
+    }
+    .how-card-title{
+      padding:14px 16px 10px;
+      font-size:12px;font-weight:700;color:var(--sub);
+      text-transform:uppercase;letter-spacing:.06em;
+    }
     .how-step{
       display:flex;align-items:flex-start;gap:12px;
       padding:10px 16px;border-top:1px solid var(--border);
     }
     .hs-num{
-      width:26px;height:26px;flex-shrink:0;
-      background:var(--green);color:#fff;border-radius:50%;
+      width:26px;height:26px;flex-shrink:0;border-radius:50%;
+      background:var(--green);color:#fff;
       display:flex;align-items:center;justify-content:center;
       font-size:12px;font-weight:700;
     }
-    .hs-text{font-size:13px;line-height:1.5;color:var(--text)}
-    .hs-text strong{display:block;font-size:14px;margin-bottom:1px}
+    .hs-body{font-size:13px;line-height:1.5}
+    .hs-body strong{display:block;font-size:14px;font-weight:700;margin-bottom:1px}
 
-    /* ── SUCCESS ─────────────────────────────── */
-    .success-wrap{
+    /* ── SUCCESS ── */
+    .success-screen{
       flex:1;display:flex;flex-direction:column;
       align-items:center;justify-content:center;
-      padding:40px 24px;text-align:center;
+      background:var(--white);padding:40px 24px;text-align:center;
     }
     .success-ring{
       width:100px;height:100px;border-radius:50%;
-      background:var(--green);display:flex;align-items:center;justify-content:center;
-      font-size:48px;margin-bottom:20px;
-      box-shadow:0 8px 32px rgba(0,177,79,.3);
+      background:linear-gradient(135deg,#1DB954,#0ABFBC);
+      display:flex;align-items:center;justify-content:center;
+      font-size:50px;margin-bottom:22px;
+      box-shadow:0 8px 32px rgba(29,185,84,.3);
       animation:pop .5s cubic-bezier(.34,1.56,.64,1) both;
     }
     @keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
-    .success-wrap h2{font-size:24px;font-weight:800;margin-bottom:8px}
-    .success-wrap p{font-size:14px;color:var(--sub);line-height:1.6;max-width:270px}
-    .ref-box{
-      background:var(--green3);border:1.5px solid #b8e8cc;
+    .success-screen h2{font-size:24px;font-weight:800;margin-bottom:10px}
+    .success-screen p{font-size:14px;color:var(--sub);line-height:1.6;max-width:270px}
+    .order-ref{
+      background:#F0FFF7;border:1.5px solid #9FD9B8;
       border-radius:12px;padding:12px 24px;
       font-size:20px;font-weight:800;color:var(--green);
-      font-family:monospace;letter-spacing:.05em;
-      margin:18px 0 6px;
+      font-family:monospace;letter-spacing:.06em;
+      margin:18px 0 8px;
     }
     .success-hint{font-size:12px;color:var(--muted)}
 
-    /* ── BOTTOM CTA ──────────────────────────── */
-    .cta{
+    /* ── CTA BAR ── */
+    .cta-bar{
       position:fixed;bottom:0;left:0;right:0;
       padding:12px 16px calc(12px + env(safe-area-inset-bottom));
-      background:var(--white);border-top:1px solid var(--border);
-      z-index:100;
+      background:#fff;border-top:1px solid var(--border);z-index:100;
     }
-    .btn{
+    .btn-grab{
       width:100%;background:var(--green);color:#fff;
       font-size:16px;font-weight:700;border:none;
       border-radius:14px;padding:16px;cursor:pointer;
-      transition:background .15s,transform .1s;
       display:flex;align-items:center;justify-content:center;gap:8px;
+      transition:background .15s,transform .1s;
     }
-    .btn:active{transform:scale(.97);background:var(--green2)}
-    .btn:disabled{background:var(--muted);cursor:not-allowed}
+    .btn-grab:active{transform:scale(.97);background:var(--green2)}
+    .btn-grab:disabled{background:var(--muted)}
     .btn-wise{
       width:100%;background:#163300;color:#fff;
       font-size:16px;font-weight:700;border:none;
@@ -304,434 +411,370 @@
     .btn-wise:active{opacity:.85}
     .btn-ghost{
       width:100%;background:transparent;color:var(--sub);
-      font-size:14px;font-weight:600;border:none;
-      padding:10px;cursor:pointer;margin-top:6px;
+      font-size:14px;border:none;padding:10px;cursor:pointer;margin-top:6px;
     }
-
-    /* ── PROGRESS ────────────────────────────── */
-    .prog{height:3px;background:var(--border);position:relative}
-    .prog-fill{height:100%;background:var(--green);transition:width .4s ease;position:absolute;top:0;left:0}
-
-    /* ── BOTTOM NAV (home) ───────────────────── */
-    .bottom-nav{
-      position:fixed;bottom:0;left:0;right:0;
-      background:var(--white);border-top:1px solid var(--border);
-      display:flex;padding:8px 0 calc(8px + env(safe-area-inset-bottom));
-      z-index:100;
-    }
-    .bnav-item{
-      flex:1;display:flex;flex-direction:column;align-items:center;
-      gap:3px;cursor:pointer;
-    }
-    .bnav-item .bi-icon{font-size:22px;opacity:.4}
-    .bnav-item .bi-label{font-size:10px;font-weight:600;color:var(--muted)}
-    .bnav-item.active .bi-icon{opacity:1}
-    .bnav-item.active .bi-label{color:var(--green)}
-
-    /* scrollable promo cards */
-    .promo-scroll{
-      display:flex;gap:12px;overflow-x:auto;padding:0 16px 4px;
-      scrollbar-width:none;
-    }
-    .promo-scroll::-webkit-scrollbar{display:none}
-    .promo-mini{
-      flex-shrink:0;width:200px;background:var(--white);
-      border-radius:14px;overflow:hidden;box-shadow:var(--shadow);
-    }
-    .promo-mini-img{
-      width:100%;height:80px;
-      display:flex;align-items:center;justify-content:center;
-      font-size:36px;
-    }
-    .promo-mini-body{padding:10px}
-    .promo-mini-body p{font-size:12px;font-weight:700;margin-bottom:2px}
-    .promo-mini-body span{font-size:11px;color:var(--sub)}
   </style>
 </head>
 <body>
 
-<!-- ══════════════════════════════════
-     SCREEN 0 — HOME (like Grab)
-══════════════════════════════════ -->
+<!-- ════════════════════════════════
+     SCREEN 0 — HOME (Grab exact)
+════════════════════════════════ -->
 <div id="s0" class="screen active">
-  <div class="home-header">
-    <div class="location-row">
-      <span class="pin">📍</span>
-      <span id="loc-text">Bangkok, Thaïlande</span>
+  <!-- Header gradient -->
+  <div class="grab-header">
+    <div class="deliver-row">
+      <div class="deliver-left">
+        <div class="deliver-info">
+          <div class="deliver-label" id="deliver-lbl">DELIVER TO</div>
+          <div class="deliver-addr">
+            <span id="deliver-addr">Bangkok, Sukhumvit</span>
+            <span class="chevron">▾</span>
+          </div>
+        </div>
+      </div>
+      <div class="header-icons">
+        <div class="hicon">♡</div>
+        <div class="hicon">📋</div>
+      </div>
     </div>
-    <h1 id="hero-h1">Commandez Grab<br>à <span>-50%</span> 🎉</h1>
-    <div class="search-bar">
-      <span class="s-icon">🔍</span>
-      <span id="search-ph">Thai, japonais, fast food...</span>
-      <span class="s-badge" id="search-badge">-50%</span>
+    <div class="grab-search">
+      <span class="gs-icon">🔍</span>
+      <span id="search-ph">What shall we deliver?</span>
+      <span class="gs-mic">🎙</span>
     </div>
   </div>
 
-  <div class="scroll" style="padding-bottom:80px">
-    <!-- Promo banner -->
-    <div class="promo-banner" style="margin:16px 16px 0">
-      <div class="promo-left">
-        <div class="promo-tag" id="promo-tag">OFFRE EXCLUSIVE</div>
-        <h3 id="promo-h3">50% OFF<br>delivery</h3>
-        <p id="promo-p">Pour tous les expats & touristes</p>
-      </div>
-      <div class="promo-emoji">🛵</div>
+  <!-- Tabs -->
+  <div class="grab-tabs">
+    <div class="gtab active" onclick="goTo(1)">
+      <div class="tab-dot">🛵</div>
+      <span id="tab-delivery">Delivery</span>
     </div>
+  </div>
 
-    <!-- Catégories -->
-    <div class="section">
-      <div class="section-head">
-        <h3 id="cat-title">Catégories</h3>
-      </div>
-    </div>
-    <div class="cuisine-scroll" id="homeCuisines"></div>
+  <div class="scroll-area">
+    <!-- Categories -->
+    <div class="cats-scroll" id="homeCats"></div>
 
-    <!-- Offres -->
-    <div class="section" style="margin-top:20px">
-      <div class="section-head">
-        <h3 id="offers-title">Nos offres du moment</h3>
+    <!-- Promo cards -->
+    <div style="background:#fff;padding:0 16px 6px;margin-top:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0 8px">
+        <span style="font-size:13px;color:var(--sub);font-weight:600" id="promo-sec-t">Deals for you</span>
       </div>
     </div>
-    <div class="promo-scroll">
-      <div class="promo-mini" style="background:linear-gradient(135deg,#00B14F,#009940)">
-        <div class="promo-mini-img">🍜</div>
-        <div class="promo-mini-body" style="color:#fff">
-          <p id="pm1-t">Budget 1 000 ฿</p>
-          <span id="pm1-s" style="color:rgba(255,255,255,.8)">Vous payez 500 ฿</span>
-        </div>
+    <div class="promo-row">
+      <div class="promo-card" style="background:linear-gradient(135deg,#00B14F,#009940)" onclick="goTo(1)">
+        <div class="promo-card-img">🍜</div>
+        <div class="promo-card-badge">-50%</div>
+        <div class="promo-card-label" id="pc1-l">Budget 1 000 ฿<br>Payez 500 ฿</div>
       </div>
-      <div class="promo-mini" style="background:linear-gradient(135deg,#FF6B35,#E85D04)">
-        <div class="promo-mini-img">🍱</div>
-        <div class="promo-mini-body" style="color:#fff">
-          <p id="pm2-t">Budget 2 000 ฿</p>
-          <span id="pm2-s" style="color:rgba(255,255,255,.8)">Vous payez 1 000 ฿</span>
-        </div>
+      <div class="promo-card" style="background:linear-gradient(135deg,#FF6B35,#E85D04)" onclick="goTo(1)">
+        <div class="promo-card-img">🍱</div>
+        <div class="promo-card-badge">-50%</div>
+        <div class="promo-card-label" id="pc2-l">Budget 2 000 ฿<br>Payez 1 000 ฿</div>
       </div>
-      <div class="promo-mini" style="background:linear-gradient(135deg,#7B2FBE,#5A189A)">
-        <div class="promo-mini-img">🥗</div>
-        <div class="promo-mini-body" style="color:#fff">
-          <p id="pm3-t">Budget flexible</p>
-          <span id="pm3-s" style="color:rgba(255,255,255,.8)">Contactez-nous</span>
-        </div>
+      <div class="promo-card" style="background:linear-gradient(135deg,#1DB954,#0ABFBC)" onclick="goTo(1)">
+        <div class="promo-card-img">🎁</div>
+        <div class="promo-card-badge">HOT</div>
+        <div class="promo-card-label" id="pc3-l">Claim your offer<br>Discount up to ฿1,000</div>
       </div>
     </div>
 
-    <!-- Restos populaires -->
-    <div class="section" style="margin-top:20px">
-      <div class="section-head">
-        <h3 id="pop-title">Populaires près de vous</h3>
-      </div>
+    <!-- Order Now -->
+    <div class="sec-head">
+      <h3 id="sec-order-now">Order Now</h3>
+      <div class="see-all"><div class="see-all-circle">▶</div></div>
     </div>
     <div class="resto-list" id="homeRestos"></div>
   </div>
-
-  <!-- Bottom Nav -->
-  <div class="bottom-nav">
-    <div class="bnav-item active"><div class="bi-icon">🏠</div><div class="bi-label" id="bn1">Accueil</div></div>
-    <div class="bnav-item"><div class="bi-icon">🔍</div><div class="bi-label" id="bn2">Explorer</div></div>
-    <div class="bnav-item" onclick="goTo(1)"><div class="bi-icon">🛒</div><div class="bi-label" id="bn3">Commander</div></div>
-    <div class="bnav-item"><div class="bi-icon">👤</div><div class="bi-label" id="bn4">Profil</div></div>
-  </div>
 </div>
 
-<!-- ══════════════════════════════════
+<!-- ════════════════════════════════
      SCREEN 1 — BUDGET
-══════════════════════════════════ -->
+════════════════════════════════ -->
 <div id="s1" class="screen">
-  <div class="topnav">
-    <button class="back" onclick="goTo(0)">←</button>
-    <h2 id="s1-title">Votre budget</h2>
-    <span class="step-pill" id="s1-step">1 / 3</span>
+  <div class="order-header">
+    <button class="back-btn" style="background:var(--bg);color:var(--text)" onclick="goTo(0)">←</button>
+    <h2 id="s1-h">Votre budget</h2>
+    <span class="step-badge" id="s1-step">1 / 3</span>
   </div>
-  <div class="prog"><div class="prog-fill" style="width:33%"></div></div>
-  <div class="scroll">
-    <div class="section" style="margin-top:0;padding-top:20px">
-      <div class="section-head"><h3 id="budget-sub">Choisissez votre panier Grab</h3></div>
-      <div class="budget-cards">
-        <div class="budget-card" id="b1000" onclick="selectBudget(1000,500,'https://wise.com/pay/r/Fk4y8LLVr8a-Z0M',this)">
-          <div class="bc-icon">🍜</div>
-          <div class="bc-budget">1 000 ฿</div>
-          <div class="bc-label" id="bc1-lbl">Budget Grab</div>
-          <div class="bc-price" id="bc1-price">Payez 500 ฿</div>
+  <div class="prog-bar"><div class="prog-fill" style="width:33%"></div></div>
+  <div class="scroll-area">
+    <div class="budget-section">
+      <div class="budget-title" id="budget-t">Choisissez votre panier Grab</div>
+      <div class="budget-grid">
+        <div class="bcard" id="b1000" onclick="selectBudget(1000,500,'https://wise.com/pay/r/Fk4y8LLVr8a-Z0M',this)">
+          <div class="bcard-icon">🍜</div>
+          <div class="bcard-info">
+            <div class="bcard-title">1 000 ฿</div>
+            <div class="bcard-sub" id="bc1-sub">Budget Grab total</div>
+          </div>
+          <div class="bcard-right">
+            <div class="bcard-price">500 ฿</div>
+            <div class="bcard-save" id="bc1-save">Économisez 50%</div>
+          </div>
         </div>
-        <div class="budget-card" id="b2000" onclick="selectBudget(2000,1000,'https://wise.com/pay/r/Z_Lts2te9J1YA98',this)">
-          <div class="bc-icon">🍱</div>
-          <div class="bc-budget">2 000 ฿</div>
-          <div class="bc-label" id="bc2-lbl">Budget Grab</div>
-          <div class="bc-price" id="bc2-price">Payez 1 000 ฿</div>
+        <div class="bcard" id="b2000" onclick="selectBudget(2000,1000,'https://wise.com/pay/r/Z_Lts2te9J1YA98',this)">
+          <div class="bcard-icon">🍱</div>
+          <div class="bcard-info">
+            <div class="bcard-title">2 000 ฿</div>
+            <div class="bcard-sub" id="bc2-sub">Budget Grab total</div>
+          </div>
+          <div class="bcard-right">
+            <div class="bcard-price">1 000 ฿</div>
+            <div class="bcard-save" id="bc2-save">Économisez 50%</div>
+          </div>
         </div>
       </div>
-
-      <div style="margin-top:20px;background:#FFF9EC;border-left:3px solid var(--yellow);border-radius:0 12px 12px 0;padding:12px 14px;font-size:13px;color:#92620A">
+      <div class="tip-box">
         <strong id="tip-t">💡 Comment ça marche ?</strong><br>
-        <span id="tip-s">Vous nous payez 50% du montant Grab. On passe la commande pour vous et on vous envoie le suivi.</span>
+        <span id="tip-s">Vous payez 50% du montant Grab. Nous passons la commande et vous envoyons le suivi en temps réel.</span>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ══════════════════════════════════
-     SCREEN 2 — CUISINE + COMMANDE
-══════════════════════════════════ -->
+<!-- ════════════════════════════════
+     SCREEN 2 — COMMANDE
+════════════════════════════════ -->
 <div id="s2" class="screen">
-  <div class="topnav">
-    <button class="back" onclick="goTo(1)">←</button>
-    <h2 id="s2-title">Votre commande</h2>
-    <span class="step-pill" id="s2-step">2 / 3</span>
+  <div class="order-header">
+    <button class="back-btn" style="background:var(--bg);color:var(--text)" onclick="goTo(1)">←</button>
+    <h2 id="s2-h">Votre commande</h2>
+    <span class="step-badge" id="s2-step">2 / 3</span>
   </div>
-  <div class="prog"><div class="prog-fill" style="width:66%"></div></div>
-  <div class="scroll">
+  <div class="prog-bar"><div class="prog-fill" style="width:66%"></div></div>
+  <div class="scroll-area">
     <!-- Cuisines -->
-    <div class="section" style="padding-top:20px;margin-bottom:8px">
-      <div class="section-head"><h3 id="s2-cat">Type de cuisine</h3></div>
-    </div>
-    <div class="cuisine-scroll" id="orderCuisines" style="padding-bottom:10px"></div>
+    <div style="padding:12px 16px 6px;background:#fff;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.05em" id="s2-cat-t">Cuisine</div>
+    <div class="cats-scroll" id="orderCats" style="padding-bottom:14px"></div>
 
-    <!-- Photo upload -->
-    <div style="padding:0 0 0 0">
-      <div style="padding:14px 16px 8px;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.05em" id="order-upload-t">Votre commande Grab</div>
+    <!-- Upload -->
+    <div class="upload-section">
+      <div class="upload-label" id="ul-t">Votre commande Grab</div>
       <div class="upload-zone" id="uploadZone" onclick="document.getElementById('photoInput').click()">
         <div class="uz-icon">📸</div>
-        <div class="uz-t" id="uz-t">Screenshot Grab</div>
-        <div class="uz-s" id="uz-s">Appuyez pour ajouter une photo</div>
+        <div class="uz-title" id="uz-t">Screenshot Grab</div>
+        <div class="uz-sub" id="uz-s">Appuyez pour ajouter une photo</div>
       </div>
       <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhoto(event)"/>
     </div>
 
-    <div class="or-divider"><span id="or-t">ou lien Grab</span></div>
+    <div class="or-line"><span id="or-t">ou lien Grab</span></div>
 
     <div class="field">
       <label id="link-lbl">Lien Grab</label>
       <input type="url" id="grabLink" placeholder="https://food.grab.com/..."/>
     </div>
 
-    <div style="padding:0 16px 10px;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.05em" id="addr-section-t">Livraison</div>
+    <div style="padding:4px 16px 8px;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.05em" id="addr-t">Livraison</div>
     <div class="field">
       <label id="addr-lbl">Adresse complète</label>
-      <textarea id="address" placeholder="Ex: 9 Sukhumvit Soi 11, Bangkok 10110"></textarea>
+      <textarea id="address" placeholder="Ex: Life One Wireless, Bangkok 10110"></textarea>
     </div>
   </div>
-  <div class="cta">
-    <button class="btn" onclick="submitOrder()" id="order-btn">Voir le récapitulatif →</button>
+  <div class="cta-bar">
+    <button class="btn-grab" onclick="submitOrder()" id="order-btn">Voir le récapitulatif →</button>
   </div>
 </div>
 
-<!-- ══════════════════════════════════
+<!-- ════════════════════════════════
      SCREEN 3 — CHECKOUT
-══════════════════════════════════ -->
+════════════════════════════════ -->
 <div id="s3" class="screen">
-  <div class="topnav">
-    <button class="back" onclick="goTo(2)">←</button>
-    <h2 id="s3-title">Paiement</h2>
-    <span class="step-pill" id="s3-step">3 / 3</span>
+  <div class="order-header">
+    <button class="back-btn" style="background:var(--bg);color:var(--text)" onclick="goTo(2)">←</button>
+    <h2 id="s3-h">Paiement</h2>
+    <span class="step-badge" id="s3-step">3 / 3</span>
   </div>
-  <div class="prog"><div class="prog-fill" style="width:100%"></div></div>
-  <div class="scroll">
-    <div class="checkout-header">
-      <p id="pay-label">Montant à payer</p>
-      <div class="big-amount"><span>฿</span><span id="big-amt">500</span></div>
+  <div class="prog-bar"><div class="prog-fill" style="width:100%"></div></div>
+  <div class="scroll-area">
+    <div class="checkout-hero">
+      <div class="ch-label" id="ch-lbl">Montant à payer</div>
+      <div class="ch-amount"><span class="ch-thb">฿</span><span id="ch-amt">500</span></div>
     </div>
 
     <div class="summary-card">
-      <div class="summary-row">
-        <span class="sr-label" id="sr1-l">Budget Grab</span>
-        <span class="sr-val" id="sr1-v">1 000 ฿</span>
-      </div>
-      <div class="summary-row">
-        <span class="sr-label" id="sr2-l">Réduction</span>
-        <span class="sr-val green" id="sr2-v">-500 ฿ (-50%)</span>
-      </div>
-      <div class="summary-row">
-        <span class="sr-label" id="sr3-l">Cuisine</span>
-        <span class="sr-val" id="sr3-v">—</span>
-      </div>
-      <div class="summary-row">
-        <span class="sr-label" id="sr4-l">Adresse</span>
-        <span class="sr-val" id="sr4-v" style="text-align:right;max-width:60%;font-size:13px">—</span>
-      </div>
-      <div class="summary-row" style="background:#F9FFF9">
-        <span class="sr-label" style="font-weight:700" id="sr5-l">Total</span>
-        <span class="sr-val big green" id="sr5-v">500 ฿</span>
-      </div>
+      <div class="sum-row"><span class="sl" id="sl1">Budget Grab</span><span class="sv" id="sv1">1 000 ฿</span></div>
+      <div class="sum-row"><span class="sl" id="sl2">Réduction -50%</span><span class="sv green" id="sv2">−500 ฿</span></div>
+      <div class="sum-row"><span class="sl" id="sl3">Cuisine</span><span class="sv" id="sv3">—</span></div>
+      <div class="sum-row"><span class="sl" id="sl4">Adresse</span><span class="sv" id="sv4" style="text-align:right;max-width:55%;font-size:13px">—</span></div>
+      <div class="sum-row total-row"><span class="sl" style="font-weight:700" id="sl5">Total</span><span class="sv big green" id="sv5">500 ฿</span></div>
     </div>
 
-    <div class="how-to">
-      <div class="how-to-title" id="ht-title">Comment payer</div>
-      <div class="how-step"><div class="hs-num">1</div><div class="hs-text"><strong id="hs1-t">Appuyez sur Payer</strong><span id="hs1-s">Vous serez redirigé vers Wise</span></div></div>
-      <div class="how-step"><div class="hs-num">2</div><div class="hs-text"><strong id="hs2-t">Réglez en ligne</strong><span id="hs2-s">Carte bancaire ou virement</span></div></div>
-      <div class="how-step"><div class="hs-num">3</div><div class="hs-text"><strong id="hs3-t">Envoyez le reçu</strong><span id="hs3-s">Screenshot Wise dans le chat Telegram</span></div></div>
+    <div class="how-card">
+      <div class="how-card-title" id="how-t">Comment payer</div>
+      <div class="how-step"><div class="hs-num">1</div><div class="hs-body"><strong id="hs1t">Appuyez sur Payer</strong><span id="hs1s">Vous serez redirigé vers Wise</span></div></div>
+      <div class="how-step"><div class="hs-num">2</div><div class="hs-body"><strong id="hs2t">Réglez en ligne</strong><span id="hs2s">Carte bancaire ou virement</span></div></div>
+      <div class="how-step"><div class="hs-num">3</div><div class="hs-body"><strong id="hs3t">Envoyez le reçu</strong><span id="hs3s">Screenshot Wise dans le chat Telegram</span></div></div>
     </div>
   </div>
-  <div class="cta">
+  <div class="cta-bar">
     <a id="wiseBtn" href="#" target="_blank" class="btn-wise" onclick="confirmPaid()">
-      <span>💳</span><span id="wise-btn-t">Payer 500 ฿ via Wise</span>
+      <span>💳</span><span id="wise-t">Payer 500 ฿ via Wise</span>
     </a>
     <button class="btn-ghost" onclick="goTo(0)" id="cancel-btn">Annuler</button>
   </div>
 </div>
 
-<!-- ══════════════════════════════════
+<!-- ════════════════════════════════
      SCREEN 4 — SUCCESS
-══════════════════════════════════ -->
-<div id="s4" class="screen" style="background:var(--white)">
-  <div class="success-wrap">
+════════════════════════════════ -->
+<div id="s4" class="screen" style="background:#fff">
+  <div class="success-screen">
     <div class="success-ring">✅</div>
-    <h2 id="sc-title">Commande reçue !</h2>
-    <p id="sc-text">Merci pour votre paiement. Envoyez votre reçu Wise dans le chat et recevez votre suivi Grab dans 5 min.</p>
-    <div class="ref-box" id="sc-ref">CMD-XXXXX</div>
-    <p class="success-hint" id="sc-hint">📸 Screenshot du reçu → chat Telegram</p>
+    <h2 id="sc-t">Commande reçue !</h2>
+    <p id="sc-p">Merci pour votre paiement. Envoyez le screenshot de votre reçu Wise et recevez votre suivi Grab dans 5 min.</p>
+    <div class="order-ref" id="sc-ref">CMD-XXXXX</div>
+    <p class="success-hint" id="sc-h">📸 Screenshot reçu → chat Telegram</p>
   </div>
 </div>
 
 <script>
-// ── TELEGRAM ──────────────────────────
 const tg = window.Telegram?.WebApp;
 if(tg){tg.ready();tg.expand()}
 
-// ── LANG ──────────────────────────────
 const lang = tg?.initDataUnsafe?.user?.language_code || 'fr';
 const FR = lang.startsWith('fr');
 
+// ── TRANSLATIONS ──
 const T = {
-  loc:    FR?'Bangkok, Thaïlande':'Bangkok, Thailand',
-  heroH1: FR?'Commandez Grab<br>à <span>-50%</span> 🎉':'Order on Grab<br>at <span>-50% off</span> 🎉',
-  sPh:    FR?'Thai, japonais, fast food...':'Thai, Japanese, fast food...',
-  promoTag: FR?'OFFRE EXCLUSIVE':'EXCLUSIVE DEAL',
-  promoH3: FR?'50% OFF<br>delivery':'50% OFF<br>delivery',
-  promoP: FR?'Pour tous les expats & touristes':'For all expats & tourists',
-  catTitle: FR?'Catégories':'Categories',
-  offTitle: FR?'Nos offres du moment':'Current offers',
-  pm1t: FR?'Budget 1 000 ฿':'Budget 1,000 ฿',
-  pm1s: FR?'Vous payez 500 ฿':'You pay 500 ฿',
-  pm2t: FR?'Budget 2 000 ฿':'Budget 2,000 ฿',
-  pm2s: FR?'Vous payez 1 000 ฿':'You pay 1,000 ฿',
-  pm3t: FR?'Budget flexible':'Flexible budget',
-  pm3s: FR?'Contactez-nous':'Contact us',
-  popTitle: FR?'Populaires près de vous':'Popular near you',
-  bn1:FR?'Accueil':'Home', bn2:'Explorer', bn3:FR?'Commander':'Order', bn4:'Profil',
-  s1Title:FR?'Votre budget':'Your budget',
-  s1Step:FR?'1 / 3':'1 / 3',
-  budgetSub:FR?'Choisissez votre panier Grab':'Choose your Grab basket',
-  bc1Lbl:FR?'Budget Grab':'Grab Budget',
-  bc1Price:FR?'Payez 500 ฿':'Pay 500 ฿',
-  bc2Lbl:FR?'Budget Grab':'Grab Budget',
-  bc2Price:FR?'Payez 1 000 ฿':'Pay 1,000 ฿',
-  tipT:FR?'💡 Comment ça marche ?':'💡 How it works?',
-  tipS:FR?'Vous nous payez 50% du montant Grab. On passe la commande pour vous et on vous envoie le suivi.':'You pay us 50% of the Grab amount. We order for you and send you the tracking link.',
-  s2Title:FR?'Votre commande':'Your order',
-  s2Step:FR?'2 / 3':'2 / 3',
-  s2Cat:FR?'Type de cuisine':'Cuisine type',
-  orderUploadT:FR?'Votre commande Grab':'Your Grab order',
-  uzT:FR?'Screenshot Grab':'Grab Screenshot',
-  uzS:FR?'Appuyez pour ajouter une photo':'Tap to add a photo',
-  orT:FR?'ou lien Grab':'or Grab link',
-  linkLbl:FR?'Lien Grab':'Grab link',
-  addrSectionT:FR?'Livraison':'Delivery',
-  addrLbl:FR?'Adresse complète':'Full address',
-  orderBtn:FR?'Voir le récapitulatif →':'See summary →',
-  s3Title:FR?'Paiement':'Payment',
-  s3Step:FR?'3 / 3':'3 / 3',
-  payLabel:FR?'Montant à payer':'Amount to pay',
-  sr1L:FR?'Budget Grab':'Grab Budget',
-  sr2L:FR?'Réduction':'Discount',
-  sr3L:FR?'Cuisine':'Cuisine',
-  sr4L:FR?'Adresse':'Address',
-  sr5L:FR?'Total':'Total',
-  htTitle:FR?'Comment payer':'How to pay',
-  hs1T:FR?'Appuyez sur Payer':'Tap Pay',
-  hs1S:FR?'Vous serez redirigé vers Wise':'You\'ll be redirected to Wise',
-  hs2T:FR?'Réglez en ligne':'Pay online',
-  hs2S:FR?'Carte bancaire ou virement':'Card or bank transfer',
-  hs3T:FR?'Envoyez le reçu':'Send the receipt',
-  hs3S:FR?'Screenshot Wise dans le chat Telegram':'Screenshot of Wise receipt in Telegram chat',
-  cancelBtn:FR?'Annuler':'Cancel',
-  scTitle:FR?'Commande reçue !':'Order received!',
-  scText:FR?'Merci pour votre paiement. Envoyez votre reçu Wise dans le chat et recevez votre suivi Grab dans 5 min.':'Thank you! Send your Wise receipt in the chat and get your Grab tracking in 5 min.',
-  scHint:FR?'📸 Screenshot du reçu → chat Telegram':'📸 Receipt screenshot → Telegram chat',
+  deliverLbl: 'DELIVER TO',
+  deliverAddr: FR ? 'Bangkok, Sukhumvit' : 'Bangkok, Sukhumvit',
+  searchPh: FR ? 'Que voulez-vous commander ?' : 'What shall we deliver?',
+  tabDelivery: 'Delivery', tabPickup: 'Pickup', tabDine: 'Dine Out Deals',
+  promoSecT: FR ? 'Offres pour vous' : 'Deals for you',
+  pc1l: FR ? 'Budget 1 000 ฿\nPayez 500 ฿' : 'Budget 1,000 ฿\nPay 500 ฿',
+  pc2l: FR ? 'Budget 2 000 ฿\nPayez 1 000 ฿' : 'Budget 2,000 ฿\nPay 1,000 ฿',
+  pc3l: FR ? 'Réclamez votre offre\nRéduction jusqu\'à ฿1 000' : 'Claim your offer\nDiscount up to ฿1,000',
+  secOrderNow: FR ? 'Commander maintenant' : 'Order Now',
+  s1H: FR ? 'Votre budget' : 'Your budget',
+  s1Step: '1 / 3',
+  budgetT: FR ? 'Choisissez votre panier Grab' : 'Choose your Grab basket',
+  bc1Sub: FR ? 'Budget Grab total' : 'Total Grab budget',
+  bc1Save: FR ? 'Économisez 50%' : 'Save 50%',
+  bc2Sub: FR ? 'Budget Grab total' : 'Total Grab budget',
+  bc2Save: FR ? 'Économisez 50%' : 'Save 50%',
+  tipT: FR ? '💡 Comment ça marche ?' : '💡 How it works?',
+  tipS: FR ? 'Vous payez 50% du montant Grab. Nous passons la commande et vous envoyons le suivi en temps réel.' : 'You pay 50% of the Grab amount. We order for you and send real-time tracking.',
+  s2H: FR ? 'Votre commande' : 'Your order',
+  s2Step: '2 / 3',
+  s2CatT: FR ? 'Cuisine' : 'Cuisine',
+  ulT: FR ? 'Votre commande Grab' : 'Your Grab order',
+  uzT: FR ? 'Screenshot Grab' : 'Grab Screenshot',
+  uzS: FR ? 'Appuyez pour ajouter une photo' : 'Tap to add a photo',
+  orT: FR ? 'ou lien Grab' : 'or Grab link',
+  linkLbl: FR ? 'Lien Grab' : 'Grab link',
+  addrT: FR ? 'Livraison' : 'Delivery',
+  addrLbl: FR ? 'Adresse complète' : 'Full address',
+  orderBtn: FR ? 'Voir le récapitulatif →' : 'See summary →',
+  s3H: FR ? 'Paiement' : 'Payment',
+  s3Step: '3 / 3',
+  chLbl: FR ? 'Montant à payer' : 'Amount to pay',
+  sl1: FR ? 'Budget Grab' : 'Grab Budget',
+  sl2: FR ? 'Réduction -50%' : 'Discount -50%',
+  sl3: FR ? 'Cuisine' : 'Cuisine',
+  sl4: FR ? 'Adresse' : 'Address',
+  sl5: FR ? 'Total' : 'Total',
+  howT: FR ? 'Comment payer' : 'How to pay',
+  hs1t: FR ? 'Appuyez sur Payer' : 'Tap Pay',
+  hs1s: FR ? 'Vous serez redirigé vers Wise' : "You'll be redirected to Wise",
+  hs2t: FR ? 'Réglez en ligne' : 'Pay online',
+  hs2s: FR ? 'Carte bancaire ou virement' : 'Card or bank transfer',
+  hs3t: FR ? 'Envoyez le reçu' : 'Send the receipt',
+  hs3s: FR ? 'Screenshot Wise dans le chat Telegram' : 'Wise receipt screenshot in Telegram chat',
+  cancelBtn: FR ? 'Annuler' : 'Cancel',
+  scT: FR ? 'Commande reçue !' : 'Order received!',
+  scP: FR ? 'Merci pour votre paiement. Envoyez le screenshot de votre reçu Wise et recevez votre suivi Grab dans 5 min.' : 'Thank you! Send your Wise receipt screenshot and get your Grab tracking in 5 min.',
+  scH: FR ? '📸 Screenshot reçu → chat Telegram' : '📸 Receipt screenshot → Telegram chat',
 };
 
-// ── CUISINES ──────────────────────────
-// Cuisines chargées depuis cuisines.json (mis à jour auto par scraper.py)
-let CUISINES=[];
-
-const RESTOS=[
-  {icon:'🍜',name:'Thai Street Kitchen',rating:'4.8',time:'25-35',tags:['Thai','Soupe','Populaire'],color:'#E8F8EF'},
-  {icon:'🍣',name:'Sushi Tokyo Express',rating:'4.7',time:'30-40',tags:['Japonais','Sushi','Fresh'],color:'#FEF3C7'},
-  {icon:'🍕',name:'Pizza Milano',rating:'4.6',time:'20-30',tags:['Italien','Pizza','Pasta'],color:'#FEE2E2'},
-  {icon:'🥗',name:'Green Bowl Bangkok',rating:'4.9',time:'15-25',tags:['Healthy','Végé','Bio'],color:'#E0F2FE'},
-];
-
-// ── BUILD UI ──────────────────────────
 function applyT(){
-  const ids={
-    'loc-text':T.loc,'search-ph':T.sPh,'promo-tag':T.promoTag,
-    'promo-h3':T.promoH3,'promo-p':T.promoP,'cat-title':T.catTitle,
-    'offers-title':T.offTitle,'pm1-t':T.pm1t,'pm1-s':T.pm1s,
-    'pm2-t':T.pm2t,'pm2-s':T.pm2s,'pm3-t':T.pm3t,'pm3-s':T.pm3s,
-    'pop-title':T.popTitle,'bn1':T.bn1,'bn2':T.bn2,'bn3':T.bn3,'bn4':T.bn4,
-    's1-title':T.s1Title,'s1-step':T.s1Step,'budget-sub':T.budgetSub,
-    'bc1-lbl':T.bc1Lbl,'bc1-price':T.bc1Price,'bc2-lbl':T.bc2Lbl,'bc2-price':T.bc2Price,
-    'tip-t':T.tipT,'tip-s':T.tipS,'s2-title':T.s2Title,'s2-step':T.s2Step,'s2-cat':T.s2Cat,
-    'order-upload-t':T.orderUploadT,'uz-t':T.uzT,'uz-s':T.uzS,'or-t':T.orT,
-    'link-lbl':T.linkLbl,'addr-section-t':T.addrSectionT,'addr-lbl':T.addrLbl,'order-btn':T.orderBtn,
-    's3-title':T.s3Title,'s3-step':T.s3Step,'pay-label':T.payLabel,
-    'sr1-l':T.sr1L,'sr2-l':T.sr2L,'sr3-l':T.sr3L,'sr4-l':T.sr4L,'sr5-l':T.sr5L,
-    'ht-title':T.htTitle,'hs1-t':T.hs1T,'hs1-s':T.hs1S,'hs2-t':T.hs2T,'hs2-s':T.hs2S,
-    'hs3-t':T.hs3T,'hs3-s':T.hs3S,'cancel-btn':T.cancelBtn,
-    'sc-title':T.scTitle,'sc-text':T.scText,'sc-hint':T.scHint,
+  const m = {
+    'deliver-lbl':T.deliverLbl,'deliver-addr':T.deliverAddr,'search-ph':T.searchPh,
+    'tab-delivery':T.tabDelivery,'tab-pickup':T.tabPickup,'tab-dine':T.tabDine,
+    'promo-sec-t':T.promoSecT,'pc1-l':T.pc1l,'pc2-l':T.pc2l,'pc3-l':T.pc3l,
+    'sec-order-now':T.secOrderNow,'s1-h':T.s1H,'s1-step':T.s1Step,'budget-t':T.budgetT,
+    'bc1-sub':T.bc1Sub,'bc1-save':T.bc1Save,'bc2-sub':T.bc2Sub,'bc2-save':T.bc2Save,
+    'tip-t':T.tipT,'tip-s':T.tipS,'s2-h':T.s2H,'s2-step':T.s2Step,'s2-cat-t':T.s2CatT,
+    'ul-t':T.ulT,'uz-t':T.uzT,'uz-s':T.uzS,'or-t':T.orT,'link-lbl':T.linkLbl,
+    'addr-t':T.addrT,'addr-lbl':T.addrLbl,'order-btn':T.orderBtn,
+    's3-h':T.s3H,'s3-step':T.s3Step,'ch-lbl':T.chLbl,
+    'sl1':T.sl1,'sl2':T.sl2,'sl3':T.sl3,'sl4':T.sl4,'sl5':T.sl5,
+    'how-t':T.howT,'hs1t':T.hs1t,'hs1s':T.hs1s,'hs2t':T.hs2t,'hs2s':T.hs2s,
+    'hs3t':T.hs3t,'hs3s':T.hs3s,'cancel-btn':T.cancelBtn,
+    'sc-t':T.scT,'sc-p':T.scP,'sc-h':T.scH,
   };
-  for(const[id,val]of Object.entries(ids)){
+  for(const[id,val] of Object.entries(m)){
     const el=document.getElementById(id);
     if(el) el.innerHTML=val;
   }
-  document.getElementById('hero-h1').innerHTML=T.heroH1;
 }
 
-function buildCuisines(){
-  ['homeCuisines','orderCuisines'].forEach(id=>{
-    const g=document.getElementById(id);
-    g.innerHTML='';
-    CUISINES.forEach(c=>{
-      const el=document.createElement('div');
-      el.className='cuis-pill';
-      el.innerHTML=`<div class="cuis-icon">${c.icon}</div><div class="cuis-name">${FR?c.fr:c.en}</div>`;
-      if(id==='homeCuisines'){
-        el.onclick=()=>{ goTo(1) };
-      } else {
-        el.onclick=()=>selectCuisine(FR?c.fr:c.en,el,id);
-      }
-      g.appendChild(el);
-    });
+// ── CUISINES ──
+let CUISINES = [];
+
+function buildCats(gridId, onClickFn){
+  const g = document.getElementById(gridId);
+  g.innerHTML = '';
+  CUISINES.forEach((c,i) => {
+    const el = document.createElement('div');
+    el.className = 'cat-item';
+    el.innerHTML = `<div class="cat-img">${c.icon}</div><div class="cat-name">${FR ? c.fr : c.en}</div>`;
+    if(c.new){
+      const badge = document.createElement('div');
+      badge.textContent='NEW';
+      badge.style.cssText='position:absolute;top:0;right:0;background:#E53935;color:#fff;font-size:7px;font-weight:800;padding:1px 4px;border-radius:4px;';
+      el.style.position='relative';
+      el.appendChild(badge);
+    }
+    el.onclick = () => onClickFn(c, el, gridId);
+    g.appendChild(el);
   });
 }
 
+// ── RESTOS ──
+const RESTOS = [
+  {icon:'🍜',name:'Thai Street Kitchen',rating:'4.8',time:'25-35',tags:['Thai','Soupe'],color:'#E8F8EF'},
+  {icon:'🍣',name:'Sushi Tokyo Express',rating:'4.7',time:'30-40',tags:['Japonais','Sushi'],color:'#FEF3C7'},
+  {icon:'🍔',name:'Burgers Bangkok',rating:'4.6',time:'20-30',tags:['Burgers','Fast Food'],color:'#FEE2E2'},
+  {icon:'🥗',name:'Green Bowl Healthy',rating:'4.9',time:'15-25',tags:['Healthy','Végé'],color:'#E0F2FE'},
+  {icon:'🍕',name:'Pizza Milano',rating:'4.5',time:'25-35',tags:['Pizza','Italien'],color:'#FFF0E0'},
+  {icon:'🧋',name:'Bubble Tea House',rating:'4.8',time:'10-20',tags:['Drinks','Bubble Tea'],color:'#F3E8FF'},
+];
+
 function buildRestos(){
-  const list=document.getElementById('homeRestos');
-  list.innerHTML='';
-  RESTOS.forEach(r=>{
-    const el=document.createElement('div');
-    el.className='resto-card';
-    el.innerHTML=`
-      <div class="resto-img" style="background:${r.color}">${r.icon}</div>
-      <div class="resto-body">
-        <div class="resto-row">
-          <div class="resto-name">${r.name}</div>
-          <div class="resto-badge">-50%</div>
-        </div>
-        <div class="resto-meta">
-          <span><span class="star">⭐</span>${r.rating}</span>
+  const list = document.getElementById('homeRestos');
+  list.innerHTML = '';
+  RESTOS.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'resto-card';
+    el.innerHTML = `
+      <div class="rc-img" style="background:${r.color}">${r.icon}</div>
+      <div class="rc-body">
+        <div class="rc-name">${r.name}</div>
+        <div class="rc-meta">
+          <span><span class="rc-star">⭐</span>${r.rating}</span>
           <span>🕐 ${r.time} min</span>
-          <span>🛵 Gratuit</span>
+          <span>🛵 Free</span>
         </div>
-        <div class="resto-tags">${r.tags.map(t=>`<span class="resto-tag">${t}</span>`).join('')}</div>
+        <div class="rc-tags">
+          ${r.tags.map(t=>`<span class="rc-tag">${t}</span>`).join('')}
+          <span class="rc-promo">-50% off</span>
+        </div>
+      </div>
+      <div class="rc-right">
+        <div class="rc-discount">-50%</div>
+        <div class="rc-time">${r.time}min</div>
       </div>`;
-    el.onclick=()=>goTo(1);
+    el.onclick = () => goTo(1);
     list.appendChild(el);
   });
 }
 
-// ── STATE ─────────────────────────────
-let state={budget:null,prix:null,wiseUrl:null,cuisine:null,address:'',link:''};
+// ── STATE ──
+let state = {budget:null,prix:null,wiseUrl:null,cuisine:null,address:'',link:''};
 
 function goTo(n){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -740,119 +783,90 @@ function goTo(n){
 }
 
 function selectBudget(b,p,url,el){
-  document.querySelectorAll('#s1 .budget-card').forEach(c=>c.classList.remove('selected'));
+  document.querySelectorAll('.bcard').forEach(c=>c.classList.remove('selected'));
   el.classList.add('selected');
-  state.budget=b;state.prix=p;state.wiseUrl=url;
-  setTimeout(()=>goTo(2),300);
+  state.budget=b; state.prix=p; state.wiseUrl=url;
+  setTimeout(()=>goTo(2), 300);
 }
 
-function selectCuisine(name,el,gridId){
-  document.querySelectorAll('#'+gridId+' .cuis-pill').forEach(c=>c.classList.remove('selected'));
+function selectCuisine(c, el, gridId){
+  document.querySelectorAll('#'+gridId+' .cat-item').forEach(x=>x.classList.remove('selected'));
   el.classList.add('selected');
-  state.cuisine=name;
+  state.cuisine = FR ? c.fr : c.en;
 }
 
 function handlePhoto(e){
-  const file=e.target.files[0];
-  if(!file)return;
-  const zone=document.getElementById('uploadZone');
-  const img=new Image();
-  img.src=URL.createObjectURL(file);
-  img.style.cssText='width:100%;border-radius:14px;display:block';
-  zone.innerHTML='';
+  const file = e.target.files[0];
+  if(!file) return;
+  const zone = document.getElementById('uploadZone');
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  img.style.cssText = 'width:100%;display:block';
+  zone.innerHTML = '';
   zone.appendChild(img);
-  zone.classList.add('has-photo');
+  zone.classList.add('filled');
 }
 
 function submitOrder(){
-  const addr=document.getElementById('address').value.trim();
-  if(!addr||addr.length<3){
-    document.getElementById('address').style.borderColor='#FF4F4F';
+  const addr = document.getElementById('address').value.trim();
+  if(!addr || addr.length < 3){
+    document.getElementById('address').style.borderColor = '#E53935';
     document.getElementById('address').focus();
     return;
   }
-  state.address=addr;
-  state.link=document.getElementById('grabLink').value.trim();
+  state.address = addr;
+  state.link = document.getElementById('grabLink').value.trim();
   buildCheckout();
   goTo(3);
 }
 
 function buildCheckout(){
-  document.getElementById('big-amt').textContent=state.prix;
-  document.getElementById('sr1-v').textContent=(state.budget||0)+' ฿';
-  document.getElementById('sr2-v').textContent='−'+(state.prix||0)+' ฿ (−50%)';
-  document.getElementById('sr3-v').textContent=state.cuisine||'—';
-  const addr=state.address.length>30?state.address.slice(0,30)+'…':state.address;
-  document.getElementById('sr4-v').textContent=addr||'—';
-  document.getElementById('sr5-v').textContent=(state.prix||0)+' ฿';
-  document.getElementById('wiseBtn').href=state.wiseUrl||'#';
-  document.getElementById('wise-btn-t').textContent=(FR?'Payer ':'Pay ')+(state.prix||0)+' ฿ via Wise';
+  document.getElementById('ch-amt').textContent = state.prix;
+  document.getElementById('sv1').textContent = (state.budget||0)+' ฿';
+  document.getElementById('sv2').textContent = '−'+(state.prix||0)+' ฿';
+  document.getElementById('sv3').textContent = state.cuisine || '—';
+  const addr = state.address.length>32 ? state.address.slice(0,32)+'…' : state.address;
+  document.getElementById('sv4').textContent = addr || '—';
+  document.getElementById('sv5').textContent = (state.prix||0)+' ฿';
+  document.getElementById('wiseBtn').href = state.wiseUrl||'#';
+  document.getElementById('wise-t').textContent = (FR?'Payer ':'Pay ')+(state.prix||0)+' ฿ via Wise';
 }
 
 function confirmPaid(){
-  const ref='CMD-'+Math.random().toString(36).slice(2,7).toUpperCase();
-  document.getElementById('sc-ref').textContent=ref;
+  const ref = 'CMD-'+Math.random().toString(36).slice(2,7).toUpperCase();
+  document.getElementById('sc-ref').textContent = ref;
   if(tg){
     tg.sendData(JSON.stringify({
-      action:'new_order',order_id:ref,
-      budget:state.budget,prix:state.prix,
-      cuisine:state.cuisine,address:state.address,link:state.link
+      action:'new_order', order_id:ref,
+      budget:state.budget, prix:state.prix,
+      cuisine:state.cuisine, address:state.address, link:state.link
     }));
   }
-  setTimeout(()=>goTo(4),350);
+  setTimeout(()=>goTo(4), 350);
 }
 
-// ── INIT ──────────────────────────────
+// ── INIT ──
 applyT();
 buildRestos();
 
-// Charger cuisines.json dynamiquement
 fetch('../cuisines.json')
-  .then(r => r.json())
-  .then(data => {
+  .then(r=>r.json())
+  .then(data=>{
     CUISINES = data.cuisines;
-    buildCuisines();
-    // Marquer les nouvelles cuisines (flag "new")
-    document.querySelectorAll('.cuis-pill').forEach((el, i) => {
-      if (CUISINES[i]?.new) {
-        const badge = document.createElement('div');
-        badge.textContent = 'NEW';
-        badge.style.cssText = 'position:absolute;top:-4px;right:-4px;background:#FF4F4F;color:#fff;font-size:8px;font-weight:800;padding:1px 4px;border-radius:4px;';
-        el.style.position = 'relative';
-        el.appendChild(badge);
-      }
-    });
+    buildCats('homeCats', (c,el,id)=>goTo(1));
+    buildCats('orderCats', (c,el,id)=>selectCuisine(c,el,id));
   })
-  .catch(() => {
-    // Fallback si JSON non accessible
-    CUISINES = [
-      {icon:'🍜',fr:'Thai',en:'Thai',grab_id:'thai'},
-      {icon:'🍣',fr:'Japonais',en:'Japanese',grab_id:'japanese'},
-      {icon:'🫕',fr:'Coréen',en:'Korean',grab_id:'korean'},
-      {icon:'🥟',fr:'Chinois',en:'Chinese',grab_id:'chinese'},
-      {icon:'🍔',fr:'Burgers',en:'Burgers',grab_id:'burgers'},
-      {icon:'🍕',fr:'Pizza',en:'Pizza',grab_id:'pizza'},
-      {icon:'🍝',fr:'Italien',en:'Italian',grab_id:'italian'},
-      {icon:'🍛',fr:'Indien',en:'Indian',grab_id:'indian'},
-      {icon:'🥗',fr:'Healthy',en:'Healthy',grab_id:'healthy'},
-      {icon:'🍟',fr:'Fast Food',en:'Fast Food',grab_id:'fast_food'},
-      {icon:'🦐',fr:'Fruits de mer',en:'Seafood',grab_id:'seafood'},
-      {icon:'🥩',fr:'BBQ / Grill',en:'BBQ / Grill',grab_id:'bbq'},
-      {icon:'🍱',fr:'Bento',en:'Bento',grab_id:'bento'},
-      {icon:'🍤',fr:'Poulet frit',en:'Fried Chicken',grab_id:'fried_chicken'},
-      {icon:'🍜',fr:'Ramen',en:'Ramen',grab_id:'ramen'},
-      {icon:'🍲',fr:'Hotpot',en:'Hotpot',grab_id:'hotpot'},
-      {icon:'🧋',fr:'Bubble Tea',en:'Bubble Tea',grab_id:'bubble_tea'},
-      {icon:'☕',fr:'Café',en:'Coffee',grab_id:'coffee'},
-      {icon:'🍰',fr:'Desserts',en:'Desserts',grab_id:'desserts'},
-      {icon:'☪️',fr:'Halal',en:'Halal',grab_id:'halal'},
-      {icon:'🥗',fr:'Végétarien',en:'Vegetarian',grab_id:'vegetarian'},
-      {icon:'🍳',fr:'Petit-déj',en:'Breakfast',grab_id:'breakfast'},
-      {icon:'🌮',fr:'Mexicain',en:'Mexican',grab_id:'mexican'},
-      {icon:'🐟',fr:'Vietnamien',en:'Vietnamese',grab_id:'vietnamese'},
-      {icon:'🥩',fr:'Steak',en:'Steak',grab_id:'steak'},
+  .catch(()=>{
+    CUISINES=[
+      {icon:'🍟',fr:'Fast Food',en:'Fast Food'},{icon:'🍔',fr:'Burgers',en:'Burgers'},
+      {icon:'🍳',fr:'Petit-déj',en:'Breakfast'},{icon:'🥗',fr:'Healthy',en:'Healthy'},
+      {icon:'🥘',fr:'Cooked',en:'Cooked'},{icon:'🍜',fr:'Thai',en:'Thai'},
+      {icon:'🍱',fr:'Bento',en:'Small Bites'},{icon:'🧁',fr:'Bakery',en:'Bakery & Sweets'},
+      {icon:'🍗',fr:'Poulet frit',en:'Fried Chicken'},{icon:'🍣',fr:'Sushi',en:'Sushi'},
+      {icon:'🍚',fr:'Rice Bowl',en:'Rice Bowl'},{icon:'☕',fr:'Café',en:'Coffee'},
     ];
-    buildCuisines();
+    buildCats('homeCats', (c,el,id)=>goTo(1));
+    buildCats('orderCats', (c,el,id)=>selectCuisine(c,el,id));
   });
 </script>
 </body>
