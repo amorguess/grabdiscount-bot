@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: grabdiscount-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python start.py
+    envVars:
+      - key: BOT_TOKEN
+        value: 8796586342:AAG4HxelgPzuDVLCfZMzcYHRDGRH_C4tig4
+      - key: ADMIN_CHAT_ID
+        value: "8711205448"
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

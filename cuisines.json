@@ -1,0 +1,250 @@
+{
+  "last_updated": "2026-04-13",
+  "total": 39,
+  "cuisines": [
+    {
+      "icon": "🧋",
+      "fr": "Bubble Tea",
+      "en": "Bubble Tea",
+      "grab_id": "ชานมไข่มุก",
+      "new": true
+    },
+    {
+      "icon": "🍤",
+      "fr": "Poulet frit",
+      "en": "Fried Chicken",
+      "grab_id": "ไก่ทอด",
+      "new": true
+    },
+    {
+      "icon": "🍔",
+      "fr": "Burgers",
+      "en": "Burgers",
+      "grab_id": "เบอร์เกอร์",
+      "new": true
+    },
+    {
+      "icon": "🍜",
+      "fr": "Nouilles",
+      "en": "Noodles",
+      "grab_id": "ก๋วยเตี๋ยว",
+      "new": true
+    },
+    {
+      "icon": "🍢",
+      "fr": "Dim Sum",
+      "en": "Dim Sum",
+      "grab_id": "ติ่มซำ",
+      "new": true
+    },
+    {
+      "icon": "🍟",
+      "fr": "Fast Food",
+      "en": "Fast Food",
+      "grab_id": "อาหารจานด่วน",
+      "new": true
+    },
+    {
+      "icon": "🍕",
+      "fr": "Pizza",
+      "en": "Pizza",
+      "grab_id": "พิซซา",
+      "new": true
+    },
+    {
+      "icon": "🥗",
+      "fr": "Healthy",
+      "en": "Healthy",
+      "grab_id": "สุขภาพดี",
+      "new": true
+    },
+    {
+      "icon": "🌯",
+      "fr": "Street Food",
+      "en": "Street Food",
+      "grab_id": "สตรีทฟู้ด",
+      "new": true
+    },
+    {
+      "icon": "🦐",
+      "fr": "Fruits de mer",
+      "en": "Seafood",
+      "grab_id": "อาหารทะเล",
+      "new": true
+    },
+    {
+      "icon": "🍜",
+      "fr": "Thai",
+      "en": "Thai",
+      "grab_id": "thai"
+    },
+    {
+      "icon": "🍣",
+      "fr": "Japonais",
+      "en": "Japanese",
+      "grab_id": "japanese"
+    },
+    {
+      "icon": "🫕",
+      "fr": "Coréen",
+      "en": "Korean",
+      "grab_id": "korean"
+    },
+    {
+      "icon": "🥟",
+      "fr": "Chinois",
+      "en": "Chinese",
+      "grab_id": "chinese"
+    },
+    {
+      "icon": "🍝",
+      "fr": "Italien",
+      "en": "Italian",
+      "grab_id": "italian"
+    },
+    {
+      "icon": "🍛",
+      "fr": "Indien",
+      "en": "Indian",
+      "grab_id": "indian"
+    },
+    {
+      "icon": "🥩",
+      "fr": "BBQ / Grill",
+      "en": "BBQ / Grill",
+      "grab_id": "bbq"
+    },
+    {
+      "icon": "🍱",
+      "fr": "Bento",
+      "en": "Bento",
+      "grab_id": "bento"
+    },
+    {
+      "icon": "🍜",
+      "fr": "Ramen",
+      "en": "Ramen",
+      "grab_id": "ramen"
+    },
+    {
+      "icon": "🍲",
+      "fr": "Hotpot / Shabu",
+      "en": "Hotpot / Shabu",
+      "grab_id": "hotpot"
+    },
+    {
+      "icon": "🥘",
+      "fr": "Mookata",
+      "en": "Mookata",
+      "grab_id": "mookata"
+    },
+    {
+      "icon": "🍚",
+      "fr": "Riz / Khao Man",
+      "en": "Rice Dishes",
+      "grab_id": "rice"
+    },
+    {
+      "icon": "🥣",
+      "fr": "Porridge",
+      "en": "Porridge",
+      "grab_id": "porridge"
+    },
+    {
+      "icon": "🥗",
+      "fr": "Végétarien",
+      "en": "Vegetarian",
+      "grab_id": "vegetarian"
+    },
+    {
+      "icon": "☪️",
+      "fr": "Halal",
+      "en": "Halal / Muslim",
+      "grab_id": "halal"
+    },
+    {
+      "icon": "🥐",
+      "fr": "Boulangerie",
+      "en": "Bakery",
+      "grab_id": "bakery"
+    },
+    {
+      "icon": "🍰",
+      "fr": "Desserts",
+      "en": "Desserts",
+      "grab_id": "desserts"
+    },
+    {
+      "icon": "🍦",
+      "fr": "Glaces",
+      "en": "Ice Cream",
+      "grab_id": "ice_cream"
+    },
+    {
+      "icon": "☕",
+      "fr": "Café",
+      "en": "Coffee & Cafe",
+      "grab_id": "coffee"
+    },
+    {
+      "icon": "🥤",
+      "fr": "Boissons",
+      "en": "Drinks",
+      "grab_id": "drinks"
+    },
+    {
+      "icon": "🍳",
+      "fr": "Petit-déj",
+      "en": "Breakfast",
+      "grab_id": "breakfast"
+    },
+    {
+      "icon": "🥙",
+      "fr": "Sandwichs",
+      "en": "Sandwiches",
+      "grab_id": "sandwiches"
+    },
+    {
+      "icon": "🌮",
+      "fr": "Mexicain",
+      "en": "Mexican",
+      "grab_id": "mexican"
+    },
+    {
+      "icon": "🍲",
+      "fr": "Soupe",
+      "en": "Soup",
+      "grab_id": "soup"
+    },
+    {
+      "icon": "🥑",
+      "fr": "Occidental",
+      "en": "Western",
+      "grab_id": "western"
+    },
+    {
+      "icon": "🐟",
+      "fr": "Vietnamien",
+      "en": "Vietnamese",
+      "grab_id": "vietnamese"
+    },
+    {
+      "icon": "🥩",
+      "fr": "Steak",
+      "en": "Steak",
+      "grab_id": "steak"
+    },
+    {
+      "icon": "🍜",
+      "fr": "Pasta",
+      "en": "Pasta",
+      "grab_id": "pasta"
+    },
+    {
+      "icon": "🍱",
+      "fr": "Nouveau 🆕",
+      "en": "New 🆕",
+      "grab_id": "new"
+    }
+  ]
+}
