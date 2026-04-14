@@ -108,10 +108,34 @@ def save(restaurants: list):
     print(f"✅ {len(restaurants)} restaurants saved to {OUTPUT}")
 
 
+def git_push():
+    """Push restaurants.json to GitHub so GitHub Pages stays up to date."""
+    import subprocess
+    try:
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(["git", "add", "restaurants.json"], cwd=repo_dir, check=True)
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=repo_dir
+        )
+        if result.returncode == 0:
+            print("[GIT] Aucun changement dans restaurants.json, push ignoré.")
+            return
+        subprocess.run(
+            ["git", "commit", "-m", f"chore: update restaurants.json ({datetime.now():%Y-%m-%d %H:%M})"],
+            cwd=repo_dir, check=True
+        )
+        subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, check=True)
+        print("[GIT] ✅ restaurants.json poussé vers GitHub Pages")
+    except Exception as e:
+        print(f"[GIT] ⚠ Push échoué: {e}")
+
+
 def run_once():
     restaurants = fetch_all_restaurants()
     if restaurants:
         save(restaurants)
+        git_push()
     return len(restaurants)
 
 

@@ -571,7 +571,25 @@
     <div style="padding:4px 16px 8px;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.05em" id="addr-t">Livraison</div>
     <div class="field">
       <label id="addr-lbl">Adresse complète</label>
-      <textarea id="address" placeholder="Ex: Life One Wireless, Bangkok 10110"></textarea>
+      <div style="position:relative">
+        <textarea id="address" placeholder="Ex: Life One Wireless, Bangkok 10110" oninput="updateMapLink()" style="padding-right:14px"></textarea>
+        <button type="button" id="geoBtn" onclick="useMyLocation()" style="
+          position:absolute;right:10px;bottom:10px;
+          background:linear-gradient(135deg,#1DB954,#0ABFBC);
+          color:#fff;border:none;border-radius:10px;
+          padding:6px 10px;font-size:12px;font-weight:700;
+          cursor:pointer;display:flex;align-items:center;gap:4px;
+          box-shadow:0 2px 8px rgba(0,177,79,.35);
+          white-space:nowrap;
+        ">📍 <span id="geoBtnTxt">Ma position</span></button>
+      </div>
+      <a id="mapsLink" href="#" target="_blank" style="
+        display:none;margin-top:8px;
+        background:#E8F4FE;border:1.5px solid #B3D8F8;border-radius:10px;
+        padding:9px 13px;font-size:13px;font-weight:600;color:#1A73E8;
+        text-decoration:none;
+        align-items:center;gap:6px;
+      ">🗺️ <span id="mapsLinkTxt">Vérifier l'adresse sur Google Maps</span></a>
     </div>
   </div>
   <div class="cta-bar">
@@ -758,62 +776,98 @@ function cuisineIcon(cuisines){
   return '🍽️';
 }
 
-function buildRestos(filter){
-  const list = document.getElementById('homeRestos');
-  list.innerHTML = '';
+let CURRENT_FILTER = null;
+let DISPLAYED_COUNT = 0;
+const PAGE_SIZE = 20;
+const BG_COLORS = ['#E8F8EF','#FEF3C7','#FEE2E2','#E0F2FE','#FFF0E0','#F3E8FF','#FFF9C4','#FCE4EC'];
 
+function getFilteredRestos(){
   let restos = ALL_RESTAURANTS.length ? ALL_RESTAURANTS : [];
-
-  // Filter by cuisine if selected
-  if(filter){
-    const fl = filter.toLowerCase();
+  if(CURRENT_FILTER){
+    const fl = CURRENT_FILTER.toLowerCase();
     const filtered = restos.filter(r =>
       r.cuisine.some(c => c.toLowerCase().includes(fl) || fl.includes(c.toLowerCase()))
     );
-    restos = filtered.length ? filtered : restos; // fallback to all if no match
+    restos = filtered.length ? filtered : restos;
   }
+  return restos;
+}
 
-  // Show up to 12 restaurants (shuffle for variety)
-  const shown = restos.slice().sort(()=>Math.random()-.5).slice(0,12);
+function renderRestoCard(r, i){
+  const el = document.createElement('div');
+  el.className = 'resto-card';
+  const icon = cuisineIcon(r.cuisine);
+  const tags = r.cuisine.slice(0,2);
+  const bg = BG_COLORS[i % BG_COLORS.length];
+  const rating = (4.5 + Math.random()*0.5).toFixed(1);
+  const tMin = 20 + Math.floor(Math.random()*15);
+  const tMax = tMin + 10 + Math.floor(Math.random()*10);
+  const img = r.photo
+    ? `<img src="${r.photo}" style="width:100%;height:100%;object-fit:cover;border-radius:10px" onerror="this.style.display='none';this.parentNode.style.fontSize='26px';this.parentNode.style.display='flex';this.parentNode.style.alignItems='center';this.parentNode.style.justifyContent='center';this.parentNode.innerHTML='${icon}'">`
+    : icon;
+  el.innerHTML = `
+    <div class="rc-img" style="background:${r.photo?'#f0f0f0':bg};${r.photo?'':'font-size:26px;display:flex;align-items:center;justify-content:center'};overflow:hidden">${img}</div>
+    <div class="rc-body">
+      <div class="rc-name">${r.name}</div>
+      <div class="rc-meta">
+        <span>⭐ ${rating}</span>
+        <span>🕐 ${tMin}-${tMax} min</span>
+        <span>🛵 Free</span>
+      </div>
+      <div class="rc-tags">
+        ${tags.map(t=>`<span class="rc-tag">${t}</span>`).join('')}
+        <span class="rc-promo">-50% off</span>
+      </div>
+    </div>
+    <div class="rc-right">
+      <div class="rc-discount">-50%</div>
+      <div class="rc-time">${tMin}min</div>
+    </div>`;
+  el.onclick = () => goTo(1);
+  return el;
+}
 
-  if(!shown.length){
-    list.innerHTML = '<div style="text-align:center;padding:30px;color:#9CA3AF">Loading restaurants…</div>';
+function buildRestos(filter){
+  CURRENT_FILTER = filter || null;
+  DISPLAYED_COUNT = 0;
+  const list = document.getElementById('homeRestos');
+  list.innerHTML = '';
+  // Remove old "load more" button if any
+  const old = document.getElementById('loadMoreBtn');
+  if(old) old.remove();
+  loadMoreRestos();
+}
+
+function loadMoreRestos(){
+  const restos = getFilteredRestos();
+  const list = document.getElementById('homeRestos');
+  const chunk = restos.slice(DISPLAYED_COUNT, DISPLAYED_COUNT + PAGE_SIZE);
+
+  if(DISPLAYED_COUNT === 0 && !chunk.length){
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:#9CA3AF">Chargement…</div>';
     return;
   }
 
-  const BG_COLORS = ['#E8F8EF','#FEF3C7','#FEE2E2','#E0F2FE','#FFF0E0','#F3E8FF','#FFF9C4','#FCE4EC'];
-
-  shown.forEach((r, i) => {
-    const el = document.createElement('div');
-    el.className = 'resto-card';
-    const icon = cuisineIcon(r.cuisine);
-    const tags = r.cuisine.slice(0,2);
-    const bg = BG_COLORS[i % BG_COLORS.length];
-    const img = r.photo ?
-      `<img src="${r.photo}" style="width:100%;height:100%;object-fit:cover;border-radius:10px" onerror="this.parentNode.innerHTML='${icon}';this.parentNode.style.fontSize='26px';this.parentNode.style.display='flex';this.parentNode.style.alignItems='center';this.parentNode.style.justifyContent='center'">` :
-      icon;
-
-    el.innerHTML = `
-      <div class="rc-img" style="background:${r.photo?'#f0f0f0':bg};${r.photo?'':'font-size:26px;display:flex;align-items:center;justify-content:center'};overflow:hidden">${img}</div>
-      <div class="rc-body">
-        <div class="rc-name">${r.name}</div>
-        <div class="rc-meta">
-          <span>⭐ 4.${5+Math.floor(Math.random()*5)}</span>
-          <span>🕐 ${20+Math.floor(Math.random()*25)}-${35+Math.floor(Math.random()*15)} min</span>
-          <span>🛵 Free</span>
-        </div>
-        <div class="rc-tags">
-          ${tags.map(t=>`<span class="rc-tag">${t}</span>`).join('')}
-          <span class="rc-promo">-50% off</span>
-        </div>
-      </div>
-      <div class="rc-right">
-        <div class="rc-discount">-50%</div>
-        <div class="rc-time">${20+Math.floor(Math.random()*20)}min</div>
-      </div>`;
-    el.onclick = () => goTo(1);
-    list.appendChild(el);
+  chunk.forEach((r, i) => {
+    list.appendChild(renderRestoCard(r, DISPLAYED_COUNT + i));
   });
+  DISPLAYED_COUNT += chunk.length;
+
+  // Update or remove "load more" button
+  let btn = document.getElementById('loadMoreBtn');
+  if(DISPLAYED_COUNT < restos.length){
+    if(!btn){
+      btn = document.createElement('button');
+      btn.id = 'loadMoreBtn';
+      btn.style.cssText = 'display:block;width:calc(100% - 32px);margin:12px 16px 24px;padding:14px;background:linear-gradient(135deg,#00B14F,#0ABFBC);color:#fff;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer';
+      btn.onclick = loadMoreRestos;
+      list.parentNode.insertBefore(btn, list.nextSibling);
+    }
+    const remaining = restos.length - DISPLAYED_COUNT;
+    btn.textContent = `Voir ${Math.min(remaining, PAGE_SIZE)} de plus (${remaining} restants)`;
+  } else if(btn){
+    btn.remove();
+  }
 }
 
 // ── STATE ──
@@ -886,6 +940,57 @@ function confirmPaid(){
     }));
   }
   setTimeout(()=>goTo(4), 350);
+}
+
+// ── GEOLOCATION + MAPS LINK ──
+function useMyLocation(){
+  const btn = document.getElementById('geoBtn');
+  const txt = document.getElementById('geoBtnTxt');
+  if(!navigator.geolocation){
+    alert(FR ? 'Géolocalisation non supportée sur ce navigateur.' : 'Geolocation not supported.');
+    return;
+  }
+  txt.textContent = FR ? 'Localisation…' : 'Locating…';
+  btn.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const lat = pos.coords.latitude.toFixed(6);
+      const lng = pos.coords.longitude.toFixed(6);
+      // Try reverse geocoding via nominatim (free, no key)
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=en`)
+        .then(r => r.json())
+        .then(data => {
+          const addr = data.display_name || `${lat}, ${lng}`;
+          document.getElementById('address').value = addr;
+          updateMapLink();
+          txt.textContent = FR ? 'Ma position' : 'My location';
+          btn.disabled = false;
+        })
+        .catch(() => {
+          document.getElementById('address').value = `${lat}, ${lng}`;
+          updateMapLink();
+          txt.textContent = FR ? 'Ma position' : 'My location';
+          btn.disabled = false;
+        });
+    },
+    err => {
+      txt.textContent = FR ? 'Ma position' : 'My location';
+      btn.disabled = false;
+      if(err.code === 1) alert(FR ? 'Accès à la localisation refusé.' : 'Location access denied.');
+    },
+    { timeout: 10000, enableHighAccuracy: true }
+  );
+}
+
+function updateMapLink(){
+  const addr = document.getElementById('address').value.trim();
+  const link = document.getElementById('mapsLink');
+  if(addr.length > 3){
+    link.href = 'https://maps.google.com/?q=' + encodeURIComponent(addr);
+    link.style.display = 'flex';
+  } else {
+    link.style.display = 'none';
+  }
 }
 
 // ── INIT ──
