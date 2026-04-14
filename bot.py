@@ -12,11 +12,13 @@ import random
 import string
 from datetime import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, filters, ContextTypes,
 )
+
+WEBAPP_URL = "https://amorguess.github.io/grabdiscount-bot/webapp/"
 
 # ──────────────────────────────────────────────────────────
 #  CONFIG
@@ -150,13 +152,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     context.user_data["order_id"] = gen_order_id()
 
-    keyboard = [
-        [InlineKeyboardButton(
-            f"🛒  Panier {m:,}฿  ➜  je paie {p:,}฿".replace(",", " "),
-            callback_data=f"budget_{m}"
-        )]
-        for m, p, _ in BUDGETS
-    ]
+    keyboard = [[
+        InlineKeyboardButton(
+            "🛒  Ouvrir GrabDiscount",
+            web_app=WebAppInfo(url=WEBAPP_URL)
+        )
+    ]]
 
     await update.message.reply_text(
         "╔═══════════════════════════╗\n"
@@ -168,7 +169,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "▸ Vous payez 50% du montant\n"
         "▸ On commande pour vous ✅\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💰 *Choisissez votre budget :*",
+        "👇 *Appuyez pour ouvrir l'app :*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -622,7 +623,84 @@ def main() -> None:
             parse_mode="Markdown",
         )
 
+    # ── Handler Mini App (web_app_data) ──────────────────────
+    async def recevoir_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Reçoit les données envoyées par tg.sendData() depuis la Mini App."""
+        data_str = update.message.web_app_data.data
+        user = update.effective_user
+        heure = datetime.now().strftime("%d/%m %H:%M")
+        try:
+            data = json.loads(data_str)
+        except Exception:
+            await update.message.reply_text("❌ Données invalides reçues.")
+            return
+
+        action = data.get("action")
+
+        if action == "new_order":
+            order_id   = data.get("order_id", gen_order_id())
+            budget     = data.get("budget", 0)
+            prix       = data.get("prix", 0)
+            cuisine    = data.get("cuisine", "?")
+            address    = data.get("address", "?")
+            link       = data.get("link", "")
+
+            # Sauvegarde
+            orders = {}
+            try:
+                with open(ORDERS_FILE) as f:
+                    orders = json.load(f)
+            except Exception:
+                pass
+            orders[order_id] = {
+                "order_id": order_id,
+                "user_id":  user.id,
+                "username": user.username or "",
+                "budget": budget, "prix": prix,
+                "cuisine": cuisine, "adresse": address,
+                "lien_commande": link, "type_commande": "lien",
+                "heure": heure, "statut": "en_attente_paiement",
+            }
+            with open(ORDERS_FILE, "w") as f:
+                json.dump(orders, f, ensure_ascii=False, indent=2)
+
+            # Confirmation client
+            await update.message.reply_text(
+                f"✅ *Commande enregistrée !*\n\n"
+                f"🆔 Réf : `{order_id}`\n"
+                f"🍽️ {cuisine} — {budget:,}฿ → vous payez *{prix:,}฿*\n"
+                f"📍 {address}\n\n"
+                f"💳 Envoyez votre reçu Wise pour confirmer.",
+                parse_mode="Markdown",
+            )
+
+            # Notif admin
+            username = f"@{user.username}" if user.username else "_(aucun)_"
+            notif = (
+                "🆕 *NOUVELLE COMMANDE — Mini App*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🆔 Réf    : `{order_id}`\n"
+                f"⏰ Heure  : {heure}\n\n"
+                f"👤 *{user.full_name}*  {username}\n"
+                f"🆔 ID : `{user.id}`\n\n"
+                f"🍽️ Cuisine : *{cuisine}*\n"
+                f"🔗 Lien    : {link or '_(non renseigné)_'}\n"
+                f"📍 Adresse : {address}\n\n"
+                f"🛒 Panier  : *{budget:,}฿*\n"
+                f"💰 À payer : *{prix:,}฿*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"`/suivi {order_id} https://lien-grab.com/...`"
+            )
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=notif,
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text("👋 Commande reçue !")
+
     app.add_handler(conv)
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, recevoir_webapp))
     app.add_handler(CommandHandler("aide",   aide))
     app.add_handler(CommandHandler("help",   aide))
     app.add_handler(CommandHandler("suivi",  envoyer_suivi))
