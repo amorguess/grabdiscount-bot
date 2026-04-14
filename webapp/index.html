@@ -413,6 +413,133 @@
       width:100%;background:transparent;color:var(--sub);
       font-size:14px;border:none;padding:10px;cursor:pointer;margin-top:6px;
     }
+
+    /* ── SKELETON SHIMMER ── */
+    @keyframes shimmer{
+      0%{background-position:-400px 0}
+      100%{background-position:400px 0}
+    }
+    .skel{
+      background:linear-gradient(90deg,#efefef 25%,#e2e2e2 50%,#efefef 75%);
+      background-size:800px 100%;
+      animation:shimmer 1.3s ease-in-out infinite;
+      border-radius:8px;
+    }
+    .skel-card{
+      display:flex;padding:14px 16px;
+      border-bottom:1px solid var(--border);
+    }
+    .skel-img{width:80px;height:80px;border-radius:14px;flex-shrink:0;margin-right:12px}
+    .skel-body{flex:1;display:flex;flex-direction:column;gap:10px;padding-top:2px}
+    .skel-line-l{height:14px;width:60%}
+    .skel-line-m{height:11px;width:42%}
+    .skel-tags{display:flex;gap:6px}
+    .skel-tag{height:18px;width:52px}
+
+    /* ── SEARCH OVERLAY ── */
+    .search-overlay{
+      position:fixed;inset:0;
+      background:rgba(0,0,0,.45);
+      z-index:300;
+      display:flex;flex-direction:column;
+      animation:fadeIn .18s ease both;
+    }
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    .search-box{
+      background:#fff;
+      border-radius:0 0 20px 20px;
+      overflow:hidden;
+      box-shadow:0 8px 32px rgba(0,0,0,.2);
+    }
+    .search-input-row{
+      display:flex;align-items:center;gap:10px;
+      padding:14px 16px;
+      padding-top:calc(14px + env(safe-area-inset-top));
+      border-bottom:1px solid var(--border);
+    }
+    .search-input-row input{
+      flex:1;border:none;outline:none;font-size:16px;
+      color:var(--text);background:transparent;
+    }
+    .search-close-btn{
+      width:32px;height:32px;border-radius:50%;
+      background:var(--bg);border:none;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      font-size:16px;flex-shrink:0;
+    }
+    .search-results{max-height:58vh;overflow-y:auto}
+    .search-item{
+      display:flex;align-items:center;gap:12px;
+      padding:11px 16px;
+      border-bottom:1px solid var(--border);
+      cursor:pointer;transition:background .1s;
+    }
+    .search-item:active{background:#F9F9F9}
+    .si-icon{
+      width:44px;height:44px;border-radius:12px;
+      flex-shrink:0;display:flex;align-items:center;
+      justify-content:center;font-size:22px;
+    }
+    .si-info{flex:1;min-width:0}
+    .si-name{font-size:14px;font-weight:700;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .si-tags{font-size:12px;color:var(--muted);margin-top:2px}
+    .search-empty{text-align:center;padding:36px 16px;
+      color:var(--muted);font-size:14px}
+
+    /* ── FILTER CHIP ── */
+    .filter-row{
+      background:#fff;padding:8px 16px 0;
+      display:none;
+    }
+    .filter-row.visible{display:block}
+    .filter-chip{
+      display:inline-flex;align-items:center;gap:6px;
+      background:var(--green);color:#fff;
+      padding:5px 12px 5px 14px;border-radius:20px;
+      font-size:12px;font-weight:700;margin-bottom:8px;
+    }
+    .fc-x{
+      cursor:pointer;opacity:.85;font-size:15px;
+      display:flex;align-items:center;
+    }
+
+    /* ── GEO ROW ── */
+    .geo-actions{
+      display:flex;align-items:center;gap:8px;
+      padding:0 16px 12px;
+    }
+    .btn-geo{
+      display:flex;align-items:center;gap:5px;
+      background:#F0FFF7;
+      border:1.5px solid #9FD9B8;
+      border-radius:10px;padding:9px 12px;
+      font-size:13px;font-weight:700;color:var(--green);
+      cursor:pointer;white-space:nowrap;
+      transition:background .15s,opacity .15s;
+      flex-shrink:0;
+    }
+    .btn-geo:active{background:#D8F5E8}
+    .btn-geo:disabled{opacity:.55;cursor:default}
+    .btn-maps-link{
+      display:none;flex:1;align-items:center;gap:5px;
+      background:#E8F4FE;border:1.5px solid #B3D8F8;
+      border-radius:10px;padding:9px 12px;
+      font-size:13px;font-weight:600;color:#1A73E8;
+      text-decoration:none;overflow:hidden;
+    }
+    .btn-maps-link.visible{display:flex}
+    .btn-maps-link span{
+      overflow:hidden;text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    /* ── MISC IMPROVEMENTS ── */
+    .resto-card{transition:background .1s,transform .05s}
+    .resto-card:active{background:#F5FFF9;transform:scale(.993)}
+    .bcard{transition:border-color .2s,background .15s,transform .1s}
+    .grab-search.clickable{cursor:pointer;user-select:none}
+    .grab-search.clickable:active{opacity:.88}
   </style>
 </head>
 <body>
@@ -422,26 +549,15 @@
 ════════════════════════════════ -->
 <div id="s0" class="screen active">
   <!-- Header gradient -->
-  <div class="grab-header">
-    <div class="deliver-row">
-      <div class="deliver-left">
-        <div class="deliver-info">
-          <div class="deliver-label" id="deliver-lbl">DELIVER TO</div>
-          <div class="deliver-addr">
-            <span id="deliver-addr">Bangkok, Sukhumvit</span>
-            <span class="chevron">▾</span>
-          </div>
-        </div>
-      </div>
-      <div class="header-icons">
-        <div class="hicon">♡</div>
-        <div class="hicon">📋</div>
-      </div>
+  <div class="grab-header" style="padding-bottom:16px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-top:2px">
+      <span style="color:#fff;font-size:20px">🛵</span>
+      <span style="color:#fff;font-size:17px;font-weight:800;letter-spacing:-.2px">GrabDiscount</span>
+      <span style="margin-left:auto;background:rgba(255,255,255,.22);color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px">−50%</span>
     </div>
-    <div class="grab-search">
+    <div class="grab-search clickable" onclick="openSearch()" style="padding:13px 16px">
       <span class="gs-icon">🔍</span>
-      <span id="search-ph">What shall we deliver?</span>
-      <span class="gs-mic">🎙</span>
+      <span id="search-ph" style="color:#9CA3AF;font-size:14px;flex:1">Chercher un restaurant…</span>
     </div>
   </div>
 
@@ -456,6 +572,13 @@
   <div class="scroll-area">
     <!-- Categories -->
     <div class="cats-scroll" id="homeCats"></div>
+    <!-- Active filter chip -->
+    <div class="filter-row" id="filterRow">
+      <div class="filter-chip" id="filterChip">
+        <span id="filterChipLabel"></span>
+        <span class="fc-x" onclick="clearFilter()">✕</span>
+      </div>
+    </div>
 
     <!-- Promo cards -->
     <div style="background:#fff;padding:0 16px 6px;margin-top:0">
@@ -487,6 +610,8 @@
       <div class="see-all"><div class="see-all-circle">▶</div></div>
     </div>
     <div class="resto-list" id="homeRestos"></div>
+    <!-- Infinite scroll sentinel -->
+    <div id="scrollSentinel" style="height:1px"></div>
   </div>
 </div>
 
@@ -571,25 +696,15 @@
     <div style="padding:4px 16px 8px;font-size:13px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.05em" id="addr-t">Livraison</div>
     <div class="field">
       <label id="addr-lbl">Adresse complète</label>
-      <div style="position:relative">
-        <textarea id="address" placeholder="Ex: Life One Wireless, Bangkok 10110" oninput="updateMapLink()" style="padding-right:14px"></textarea>
-        <button type="button" id="geoBtn" onclick="useMyLocation()" style="
-          position:absolute;right:10px;bottom:10px;
-          background:linear-gradient(135deg,#1DB954,#0ABFBC);
-          color:#fff;border:none;border-radius:10px;
-          padding:6px 10px;font-size:12px;font-weight:700;
-          cursor:pointer;display:flex;align-items:center;gap:4px;
-          box-shadow:0 2px 8px rgba(0,177,79,.35);
-          white-space:nowrap;
-        ">📍 <span id="geoBtnTxt">Ma position</span></button>
-      </div>
-      <a id="mapsLink" href="#" target="_blank" style="
-        display:none;margin-top:8px;
-        background:#E8F4FE;border:1.5px solid #B3D8F8;border-radius:10px;
-        padding:9px 13px;font-size:13px;font-weight:600;color:#1A73E8;
-        text-decoration:none;
-        align-items:center;gap:6px;
-      ">🗺️ <span id="mapsLinkTxt">Vérifier l'adresse sur Google Maps</span></a>
+      <textarea id="address" placeholder="Ex: Life One Wireless, Bangkok 10110" oninput="updateMapLink()"></textarea>
+    </div>
+    <div class="geo-actions">
+      <button type="button" id="geoBtn" class="btn-geo" onclick="useMyLocation()">
+        <span>📍</span><span id="geoBtnTxt">Ma position</span>
+      </button>
+      <a id="mapsLink" class="btn-maps-link" href="#" target="_blank">
+        <span>🗺️</span><span id="mapsLinkTxt">Vérifier sur Maps</span>
+      </a>
     </div>
   </div>
   <div class="cta-bar">
@@ -646,6 +761,20 @@
     <p id="sc-p">Merci pour votre paiement. Envoyez le screenshot de votre reçu Wise et recevez votre suivi Grab dans 5 min.</p>
     <div class="order-ref" id="sc-ref">CMD-XXXXX</div>
     <p class="success-hint" id="sc-h">📸 Screenshot reçu → chat Telegram</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════
+     SEARCH OVERLAY
+════════════════════════════════ -->
+<div id="searchOverlay" class="search-overlay" style="display:none" onclick="closeSearchOnBg(event)">
+  <div class="search-box">
+    <div class="search-input-row">
+      <span style="font-size:16px;color:var(--muted)">🔍</span>
+      <input type="text" id="searchInput" placeholder="Chercher un restaurant…" oninput="filterSearch()" autocomplete="off" autocorrect="off" spellcheck="false"/>
+      <button class="search-close-btn" onclick="closeSearch()">✕</button>
+    </div>
+    <div class="search-results" id="searchResults"></div>
   </div>
 </div>
 
@@ -752,6 +881,13 @@ function buildCats(gridId, onClickFn){
   });
 }
 
+// ── HAPTIC ──
+function haptic(style){
+  try{ tg?.HapticFeedback?.impactOccurred(style||'light') }catch(e){}
+}
+function hapticSelect(){ try{ tg?.HapticFeedback?.selectionChanged() }catch(e){} }
+function hapticNotif(t){ try{ tg?.HapticFeedback?.notificationOccurred(t||'success') }catch(e){} }
+
 // ── RESTOS (real data from restaurants.json) ──
 let ALL_RESTAURANTS = [];
 const CUISINE_ICONS = {
@@ -827,47 +963,83 @@ function renderRestoCard(r, i){
   return el;
 }
 
+// ── SKELETON ──
+function showSkeletons(n){
+  const list = document.getElementById('homeRestos');
+  list.innerHTML = '';
+  for(let i=0;i<n;i++){
+    list.innerHTML += `<div class="skel-card">
+      <div class="skel skel-img"></div>
+      <div class="skel-body">
+        <div class="skel skel-line-l"></div>
+        <div class="skel skel-line-m"></div>
+        <div class="skel-tags">
+          <div class="skel skel-tag"></div>
+          <div class="skel skel-tag"></div>
+        </div>
+      </div>
+    </div>`;
+  }
+}
+
+// ── FILTER CHIP ──
+function showFilterChip(label){
+  const row = document.getElementById('filterRow');
+  document.getElementById('filterChipLabel').textContent = label;
+  row.classList.add('visible');
+}
+function hideFilterChip(){
+  document.getElementById('filterRow').classList.remove('visible');
+}
+function clearFilter(){
+  hapticSelect();
+  CURRENT_FILTER = null;
+  hideFilterChip();
+  // Deselect all category items
+  document.querySelectorAll('#homeCats .cat-item').forEach(x=>x.classList.remove('selected'));
+  buildRestos(null);
+}
+
+// ── INFINITE SCROLL (IntersectionObserver) ──
+let _scrollObserver = null;
+function setupScrollObserver(){
+  if(_scrollObserver) _scrollObserver.disconnect();
+  const sentinel = document.getElementById('scrollSentinel');
+  if(!sentinel) return;
+  _scrollObserver = new IntersectionObserver(entries=>{
+    if(entries[0].isIntersecting){
+      const restos = getFilteredRestos();
+      if(DISPLAYED_COUNT < restos.length) loadMoreRestos();
+    }
+  },{rootMargin:'120px'});
+  _scrollObserver.observe(sentinel);
+}
+
 function buildRestos(filter){
   CURRENT_FILTER = filter || null;
   DISPLAYED_COUNT = 0;
   const list = document.getElementById('homeRestos');
   list.innerHTML = '';
-  // Remove old "load more" button if any
-  const old = document.getElementById('loadMoreBtn');
-  if(old) old.remove();
+  if(ALL_RESTAURANTS.length === 0){
+    showSkeletons(6);
+    return;
+  }
   loadMoreRestos();
+  setupScrollObserver();
 }
 
 function loadMoreRestos(){
   const restos = getFilteredRestos();
   const list = document.getElementById('homeRestos');
-  const chunk = restos.slice(DISPLAYED_COUNT, DISPLAYED_COUNT + PAGE_SIZE);
-
-  if(DISPLAYED_COUNT === 0 && !chunk.length){
-    list.innerHTML = '<div style="text-align:center;padding:30px;color:#9CA3AF">Chargement…</div>';
+  if(DISPLAYED_COUNT === 0 && !restos.length){
+    list.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#9CA3AF;font-size:14px">Aucun restaurant trouvé 😕</div>';
     return;
   }
-
-  chunk.forEach((r, i) => {
-    list.appendChild(renderRestoCard(r, DISPLAYED_COUNT + i));
-  });
+  const chunk = restos.slice(DISPLAYED_COUNT, DISPLAYED_COUNT + PAGE_SIZE);
+  const frag = document.createDocumentFragment();
+  chunk.forEach((r,i) => frag.appendChild(renderRestoCard(r, DISPLAYED_COUNT + i)));
+  list.appendChild(frag);
   DISPLAYED_COUNT += chunk.length;
-
-  // Update or remove "load more" button
-  let btn = document.getElementById('loadMoreBtn');
-  if(DISPLAYED_COUNT < restos.length){
-    if(!btn){
-      btn = document.createElement('button');
-      btn.id = 'loadMoreBtn';
-      btn.style.cssText = 'display:block;width:calc(100% - 32px);margin:12px 16px 24px;padding:14px;background:linear-gradient(135deg,#00B14F,#0ABFBC);color:#fff;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer';
-      btn.onclick = loadMoreRestos;
-      list.parentNode.insertBefore(btn, list.nextSibling);
-    }
-    const remaining = restos.length - DISPLAYED_COUNT;
-    btn.textContent = `Voir ${Math.min(remaining, PAGE_SIZE)} de plus (${remaining} restants)`;
-  } else if(btn){
-    btn.remove();
-  }
 }
 
 // ── STATE ──
@@ -880,13 +1052,15 @@ function goTo(n){
 }
 
 function selectBudget(b,p,url,el){
+  haptic('medium');
   document.querySelectorAll('.bcard').forEach(c=>c.classList.remove('selected'));
   el.classList.add('selected');
   state.budget=b; state.prix=p; state.wiseUrl=url;
-  setTimeout(()=>goTo(2), 300);
+  setTimeout(()=>goTo(2), 280);
 }
 
 function selectCuisine(c, el, gridId){
+  hapticSelect();
   document.querySelectorAll('#'+gridId+' .cat-item').forEach(x=>x.classList.remove('selected'));
   el.classList.add('selected');
   state.cuisine = FR ? c.fr : c.en;
@@ -942,33 +1116,92 @@ function confirmPaid(){
   setTimeout(()=>goTo(4), 350);
 }
 
+// ── SEARCH OVERLAY ──
+function openSearch(){
+  haptic('light');
+  const overlay = document.getElementById('searchOverlay');
+  overlay.style.display = 'flex';
+  setTimeout(()=>{ document.getElementById('searchInput').focus(); }, 80);
+  renderSearchResults('');
+}
+function closeSearch(){
+  haptic('light');
+  document.getElementById('searchOverlay').style.display = 'none';
+  document.getElementById('searchInput').value = '';
+}
+function closeSearchOnBg(e){
+  if(e.target === document.getElementById('searchOverlay')) closeSearch();
+}
+function filterSearch(){
+  renderSearchResults(document.getElementById('searchInput').value);
+}
+function renderSearchResults(q){
+  const container = document.getElementById('searchResults');
+  const query = q.trim().toLowerCase();
+  let results = ALL_RESTAURANTS;
+  if(query){
+    results = ALL_RESTAURANTS.filter(r =>
+      r.name.toLowerCase().includes(query) ||
+      r.cuisine.some(c => c.toLowerCase().includes(query))
+    );
+  }
+  if(!results.length){
+    container.innerHTML = `<div class="search-empty">Aucun résultat pour « ${q} »</div>`;
+    return;
+  }
+  const top = results.slice(0, 40);
+  const frag = document.createDocumentFragment();
+  top.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'search-item';
+    const bg = BG_COLORS[Math.floor(Math.random()*BG_COLORS.length)];
+    const icon = cuisineIcon(r.cuisine);
+    el.innerHTML = `
+      <div class="si-icon" style="background:${bg}">${icon}</div>
+      <div class="si-info">
+        <div class="si-name">${r.name}</div>
+        <div class="si-tags">${r.cuisine.slice(0,3).join(' · ')}</div>
+      </div>
+      <span style="color:var(--muted);font-size:18px">›</span>`;
+    el.onclick = () => {
+      haptic('light');
+      closeSearch();
+      goTo(1);
+    };
+    frag.appendChild(el);
+  });
+  container.innerHTML = '';
+  container.appendChild(frag);
+}
+
 // ── GEOLOCATION + MAPS LINK ──
 function useMyLocation(){
   const btn = document.getElementById('geoBtn');
   const txt = document.getElementById('geoBtnTxt');
   if(!navigator.geolocation){
-    alert(FR ? 'Géolocalisation non supportée sur ce navigateur.' : 'Geolocation not supported.');
+    alert(FR ? 'Géolocalisation non disponible.' : 'Geolocation not available.');
     return;
   }
-  txt.textContent = FR ? 'Localisation…' : 'Locating…';
+  haptic('light');
+  txt.textContent = '…';
   btn.disabled = true;
   navigator.geolocation.getCurrentPosition(
     pos => {
       const lat = pos.coords.latitude.toFixed(6);
       const lng = pos.coords.longitude.toFixed(6);
-      // Try reverse geocoding via nominatim (free, no key)
       fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=en`)
         .then(r => r.json())
         .then(data => {
           const addr = data.display_name || `${lat}, ${lng}`;
           document.getElementById('address').value = addr;
           updateMapLink();
-          txt.textContent = FR ? 'Ma position' : 'My location';
-          btn.disabled = false;
+          hapticNotif('success');
         })
         .catch(() => {
           document.getElementById('address').value = `${lat}, ${lng}`;
           updateMapLink();
+        })
+        .finally(() => {
           txt.textContent = FR ? 'Ma position' : 'My location';
           btn.disabled = false;
         });
@@ -976,7 +1209,7 @@ function useMyLocation(){
     err => {
       txt.textContent = FR ? 'Ma position' : 'My location';
       btn.disabled = false;
-      if(err.code === 1) alert(FR ? 'Accès à la localisation refusé.' : 'Location access denied.');
+      if(err.code === 1) alert(FR ? 'Localisation refusée.' : 'Location denied.');
     },
     { timeout: 10000, enableHighAccuracy: true }
   );
@@ -987,34 +1220,43 @@ function updateMapLink(){
   const link = document.getElementById('mapsLink');
   if(addr.length > 3){
     link.href = 'https://maps.google.com/?q=' + encodeURIComponent(addr);
-    link.style.display = 'flex';
+    link.classList.add('visible');
   } else {
-    link.style.display = 'none';
+    link.classList.remove('visible');
   }
 }
 
 // ── INIT ──
 applyT();
-buildRestos();
+showSkeletons(6); // immediate skeleton while JSON loads
 
-// Load real restaurants
 fetch('../restaurants.json')
   .then(r=>r.json())
   .then(data=>{
     ALL_RESTAURANTS = data.restaurants || [];
-    buildRestos(); // refresh with real data
+    buildRestos();
+    setupScrollObserver();
   })
-  .catch(()=>{ /* keep placeholder */ });
+  .catch(()=>{
+    document.getElementById('homeRestos').innerHTML =
+      '<div style="text-align:center;padding:40px;color:#9CA3AF">Impossible de charger les restaurants.</div>';
+  });
 
 function initCuisines(){
-  buildCats('homeCats', (c,el,id)=>{
-    // Filter restaurants by this cuisine, don't navigate
+  buildCats('homeCats', (c, el, id)=>{
+    hapticSelect();
     const filter = c.en || c.fr;
-    buildRestos(filter);
-    // Scroll restaurant list into view
-    document.getElementById('homeRestos').scrollIntoView({behavior:'smooth',block:'nearest'});
+    CURRENT_FILTER = filter;
+    showFilterChip(filter);
+    DISPLAYED_COUNT = 0;
+    document.getElementById('homeRestos').innerHTML = '';
+    loadMoreRestos();
+    setupScrollObserver();
+    setTimeout(()=>{
+      document.getElementById('homeRestos').scrollIntoView({behavior:'smooth', block:'nearest'});
+    }, 60);
   });
-  buildCats('orderCats', (c,el,id)=>selectCuisine(c,el,id));
+  buildCats('orderCats', (c, el, id) => selectCuisine(c, el, id));
 }
 
 fetch('../cuisines.json')
