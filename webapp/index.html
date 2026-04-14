@@ -804,10 +804,7 @@ const FR = lang.startsWith('fr');
 
 // ── TRANSLATIONS ──
 const T = {
-  deliverLbl: 'DELIVER TO',
-  deliverAddr: FR ? 'Bangkok, Sukhumvit' : 'Bangkok, Sukhumvit',
-  searchPh: FR ? 'Que voulez-vous commander ?' : 'What shall we deliver?',
-  tabDelivery: 'Delivery', tabPickup: 'Pickup', tabDine: 'Dine Out Deals',
+  searchPh: FR ? 'Chercher un restaurant…' : 'Search restaurants…',
   promoSecT: FR ? 'Offres pour vous' : 'Deals for you',
   pc1l: FR ? 'Budget 1 000 ฿\nPayez 500 ฿' : 'Budget 1,000 ฿\nPay 500 ฿',
   pc2l: FR ? 'Budget 2 000 ฿\nPayez 1 000 ฿' : 'Budget 2,000 ฿\nPay 1,000 ฿',
@@ -856,8 +853,7 @@ const T = {
 
 function applyT(){
   const m = {
-    'deliver-lbl':T.deliverLbl,'deliver-addr':T.deliverAddr,'search-ph':T.searchPh,
-    'tab-delivery':T.tabDelivery,'tab-pickup':T.tabPickup,'tab-dine':T.tabDine,
+    'search-ph':T.searchPh,
     'promo-sec-t':T.promoSecT,'pc1-l':T.pc1l,'pc2-l':T.pc2l,'pc3-l':T.pc3l,
     'sec-order-now':T.secOrderNow,'s1-h':T.s1H,'s1-step':T.s1Step,'budget-t':T.budgetT,
     'bc1-sub':T.bc1Sub,'bc1-save':T.bc1Save,'bc2-sub':T.bc2Sub,'bc2-save':T.bc2Save,
