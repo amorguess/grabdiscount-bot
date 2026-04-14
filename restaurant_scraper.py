@@ -109,20 +109,32 @@ def save(restaurants: list):
 
 
 def git_push():
-    """Push restaurants.json to GitHub so GitHub Pages stays up to date."""
+    """Push restaurants.json to GitHub so GitHub Pages stays up to date.
+    Requires GIT_TOKEN env var on Render (Personal Access Token with repo scope).
+    """
     import subprocess
+    token = os.environ.get("GIT_TOKEN", "")
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+
+    if not token:
+        print("[GIT] ⚠ GIT_TOKEN non défini — push ignoré (local ou Render sans token).")
+        return
+
     try:
-        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        # Configure remote URL with token for auth
+        remote_url = f"https://{token}@github.com/amorguess/grabdiscount-bot.git"
+        subprocess.run(["git", "remote", "set-url", "origin", remote_url],
+                       cwd=repo_dir, check=True, capture_output=True)
+
         subprocess.run(["git", "add", "restaurants.json"], cwd=repo_dir, check=True)
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            cwd=repo_dir
-        )
+        result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_dir)
         if result.returncode == 0:
             print("[GIT] Aucun changement dans restaurants.json, push ignoré.")
             return
         subprocess.run(
-            ["git", "commit", "-m", f"chore: update restaurants.json ({datetime.now():%Y-%m-%d %H:%M})"],
+            ["git", "-c", "user.email=bot@grabdiscount.app",
+             "-c", "user.name=GrabDiscount Bot",
+             "commit", "-m", f"chore: update restaurants.json ({datetime.now():%Y-%m-%d %H:%M})"],
             cwd=repo_dir, check=True
         )
         subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, check=True)

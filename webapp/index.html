@@ -952,15 +952,21 @@ function getFilteredRestos(){
   return restos;
 }
 
+function hashCode(str){
+  let h = 0;
+  for(let i=0;i<str.length;i++){h = Math.imul(31,h)+str.charCodeAt(i)|0}
+  return Math.abs(h);
+}
+
 function renderRestoCard(r, i){
   const el = document.createElement('div');
   el.className = 'resto-card';
   const icon = cuisineIcon(r.cuisine);
   const tags = r.cuisine.slice(0,2);
   const bg = BG_COLORS[i % BG_COLORS.length];
-  const rating = (4.5 + Math.random()*0.5).toFixed(1);
-  const tMin = 20 + Math.floor(Math.random()*15);
-  const tMax = tMin + 10 + Math.floor(Math.random()*10);
+  const rating = (4.5 + (hashCode(r.id || r.name) % 10) / 20).toFixed(1);
+  const tMin = 20 + (hashCode(r.name) % 15);
+  const tMax = tMin + 10 + (hashCode((r.id||r.name)+'x') % 10);
   const img = r.photo
     ? `<img src="${r.photo}" style="width:100%;height:100%;object-fit:cover;border-radius:10px" onerror="this.style.display='none';this.parentNode.style.fontSize='26px';this.parentNode.style.display='flex';this.parentNode.style.alignItems='center';this.parentNode.style.justifyContent='center';this.parentNode.innerHTML='${icon}'">`
     : icon;
@@ -1256,17 +1262,27 @@ function updateMapLink(){
 applyT();
 showSkeletons(6); // immediate skeleton while JSON loads
 
-fetch('../restaurants.json')
-  .then(r=>r.json())
-  .then(data=>{
-    ALL_RESTAURANTS = data.restaurants || [];
-    buildRestos();
-    setupScrollObserver();
-  })
-  .catch(()=>{
-    document.getElementById('homeRestos').innerHTML =
-      '<div style="text-align:center;padding:40px;color:#9CA3AF">Impossible de charger les restaurants.</div>';
-  });
+const _cachedRestos = localStorage.getItem('grab_restos_cache');
+const _cachedTs = localStorage.getItem('grab_restos_ts');
+if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000){
+  ALL_RESTAURANTS = JSON.parse(_cachedRestos);
+  buildRestos();
+  setupScrollObserver();
+} else {
+  fetch('../restaurants.json')
+    .then(r=>r.json())
+    .then(data=>{
+      ALL_RESTAURANTS = data.restaurants || [];
+      localStorage.setItem('grab_restos_cache', JSON.stringify(data.restaurants));
+      localStorage.setItem('grab_restos_ts', Date.now());
+      buildRestos();
+      setupScrollObserver();
+    })
+    .catch(()=>{
+      document.getElementById('homeRestos').innerHTML =
+        '<div style="text-align:center;padding:40px;color:#9CA3AF">Impossible de charger les restaurants.</div>';
+    });
+}
 
 function initCuisines(){
   buildCats('homeCats', (c, el, id)=>{

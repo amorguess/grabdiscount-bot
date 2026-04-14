@@ -5,6 +5,7 @@
 LANCEMENT : python3 bot.py
 """
 
+import os
 import re
 import json
 import logging
@@ -24,8 +25,8 @@ WEBAPP_URL = "https://amorguess.github.io/grabdiscount-bot/webapp/"
 #  CONFIG
 # ──────────────────────────────────────────────────────────
 
-BOT_TOKEN     = "8796586342:AAG4HxelgPzuDVLCfZMzcYHRDGRH_C4tig4"
-ADMIN_CHAT_ID = 8711205448
+BOT_TOKEN     = os.environ.get("BOT_TOKEN",     "8796586342:AAG4HxelgPzuDVLCfZMzcYHRDGRH_C4tig4")
+ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", 8711205448))
 
 # (panier minimum, prix client, lien Wise)
 BUDGETS = [
@@ -62,7 +63,6 @@ logger = logging.getLogger(__name__)
 #  STATUT ADMIN
 # ──────────────────────────────────────────────────────────
 
-import os
 DATA_DIR    = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 STATUS_FILE = os.path.join(DATA_DIR, "status.json")
 
@@ -466,6 +466,39 @@ async def cmd_statut(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         parse_mode="Markdown",
     )
 
+async def cmd_commandes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin liste les commandes des dernières 24h."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    try:
+        with open(ORDERS_FILE, "r") as f:
+            orders = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        await update.message.reply_text("Aucune commande enregistrée.")
+        return
+
+    now_ts = datetime.now()
+    lignes = []
+    for oid, cmd in orders.items():
+        try:
+            cmd_dt = datetime.strptime(cmd.get("heure", ""), "%d/%m %H:%M").replace(year=now_ts.year)
+            if (now_ts - cmd_dt).total_seconds() > 86400:
+                continue
+        except Exception:
+            continue
+        lignes.append(
+            f"🆔 `{oid}` | {cmd.get('nom','?')} | {cmd.get('cuisine','?')} | "
+            f"{cmd.get('adresse','?')} | {cmd.get('statut','?')} | {cmd.get('heure','?')}"
+        )
+
+    if not lignes:
+        await update.message.reply_text("Aucune commande dans les dernières 24h.")
+        return
+
+    texte = "*Commandes des dernières 24h :*\n━━━━━━━━━━━━━━━━━━━━━━━━\n" + "\n".join(lignes)
+    await update.message.reply_text(texte, parse_mode="Markdown")
+
+
 async def envoyer_suivi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin envoie le lien de suivi Grab au client.
     Usage : /suivi CMD-XXXXX https://grab.com/tracking/...
@@ -626,6 +659,7 @@ def main() -> None:
     # ── Handler Mini App (web_app_data) ──────────────────────
     async def recevoir_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Reçoit les données envoyées par tg.sendData() depuis la Mini App."""
+        context.user_data.clear()
         data_str = update.message.web_app_data.data
         user = update.effective_user
         heure = datetime.now().strftime("%d/%m %H:%M")
@@ -688,6 +722,31 @@ def main() -> None:
     # ── Reçu Wise après flux Mini App ──────────────────────
     async def recevoir_paiement_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = context.user_data.get("webapp_order_id")
+        if not order_id:
+            # Cherche une commande récente (< 2h) en attente de paiement pour ce user
+            user_id = update.effective_user.id
+            try:
+                with open(ORDERS_FILE) as f:
+                    orders = json.load(f)
+                now_ts = datetime.now()
+                for oid, cmd in orders.items():
+                    if (
+                        cmd.get("chat_id") == user_id
+                        and cmd.get("statut") == "en_attente_paiement"
+                    ):
+                        try:
+                            cmd_dt = datetime.strptime(cmd.get("heure", ""), "%d/%m %H:%M").replace(
+                                year=now_ts.year
+                            )
+                            diff = (now_ts - cmd_dt).total_seconds()
+                            if 0 <= diff <= 7200:
+                                order_id = oid
+                                context.user_data["webapp_order_id"] = order_id
+                                break
+                        except Exception:
+                            pass
+            except Exception:
+                pass
         if not order_id:
             # Photo reçue hors contexte → message générique
             await update.message.reply_text(
@@ -763,9 +822,10 @@ def main() -> None:
     app.add_handler(CommandHandler("aide",   aide))
     app.add_handler(CommandHandler("help",   aide))
     app.add_handler(CommandHandler("suivi",  envoyer_suivi))
-    app.add_handler(CommandHandler("dispo",  cmd_dispo))
-    app.add_handler(CommandHandler("pause",  cmd_pause))
-    app.add_handler(CommandHandler("statut", cmd_statut))
+    app.add_handler(CommandHandler("dispo",     cmd_dispo))
+    app.add_handler(CommandHandler("pause",     cmd_pause))
+    app.add_handler(CommandHandler("statut",    cmd_statut))
+    app.add_handler(CommandHandler("commandes", cmd_commandes))
     # Photo hors conversation — reçu Wise webapp OU message générique
     app.add_handler(MessageHandler(filters.PHOTO, recevoir_paiement_webapp))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, hors_session))
