@@ -638,14 +638,14 @@ def main() -> None:
         action = data.get("action")
 
         if action == "new_order":
-            order_id   = data.get("order_id", gen_order_id())
-            budget     = data.get("budget", 0)
-            prix       = data.get("prix", 0)
-            cuisine    = data.get("cuisine", "?")
-            address    = data.get("address", "?")
-            link       = data.get("link", "")
+            order_id = data.get("order_id", gen_order_id())
+            budget   = data.get("budget", 0)
+            prix     = data.get("prix", 0)
+            cuisine  = data.get("cuisine", "?")
+            address  = data.get("address", "?")
+            link     = data.get("link", "")
 
-            # Sauvegarde
+            # Sauvegarde en attente de preuve de paiement
             orders = {}
             try:
                 with open(ORDERS_FILE) as f:
@@ -654,50 +654,109 @@ def main() -> None:
                 pass
             orders[order_id] = {
                 "order_id": order_id,
-                "user_id":  user.id,
+                "chat_id":  user.id,
+                "nom":      user.full_name,
                 "username": user.username or "",
                 "budget": budget, "prix": prix,
                 "cuisine": cuisine, "adresse": address,
-                "lien_commande": link, "type_commande": "lien",
+                "lien_commande": link,
                 "heure": heure, "statut": "en_attente_paiement",
             }
             with open(ORDERS_FILE, "w") as f:
                 json.dump(orders, f, ensure_ascii=False, indent=2)
 
-            # Confirmation client
-            await update.message.reply_text(
-                f"✅ *Commande enregistrée !*\n\n"
-                f"🆔 Réf : `{order_id}`\n"
-                f"🍽️ {cuisine} — {budget:,}฿ → vous payez *{prix:,}฿*\n"
-                f"📍 {address}\n\n"
-                f"💳 Envoyez votre reçu Wise pour confirmer.",
-                parse_mode="Markdown",
-            )
+            # Mémorise dans user_data pour capturer la preuve de paiement
+            context.user_data["webapp_order_id"] = order_id
 
-            # Notif admin
-            username = f"@{user.username}" if user.username else "_(aucun)_"
-            notif = (
-                "🆕 *NOUVELLE COMMANDE — Mini App*\n"
+            # Confirmation client — lui demande d'envoyer le reçu
+            await update.message.reply_text(
+                "╔═══════════════════════════╗\n"
+                "║   💳  PAIEMENT EN COURS   ║\n"
+                "╚═══════════════════════════╝\n\n"
+                f"🆔 Réf : `{order_id}`\n"
+                f"🍽️ {cuisine}\n"
+                f"📍 {address}\n"
+                f"💰 À payer : *{prix:,}฿* via Wise\n\n".replace(",", " ") +
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🆔 Réf    : `{order_id}`\n"
-                f"⏰ Heure  : {heure}\n\n"
-                f"👤 *{user.full_name}*  {username}\n"
-                f"🆔 ID : `{user.id}`\n\n"
-                f"🍽️ Cuisine : *{cuisine}*\n"
-                f"🔗 Lien    : {link or '_(non renseigné)_'}\n"
-                f"📍 Adresse : {address}\n\n"
-                f"🛒 Panier  : *{budget:,}฿*\n"
-                f"💰 À payer : *{prix:,}฿*\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"`/suivi {order_id} https://lien-grab.com/...`"
-            )
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=notif,
+                "📸 *Envoyez le screenshot de votre reçu Wise*\n"
+                "pour que nous validions et passions la commande ! ✅",
                 parse_mode="Markdown",
             )
         else:
             await update.message.reply_text("👋 Commande reçue !")
+
+    # ── Reçu Wise après flux Mini App ──────────────────────
+    async def recevoir_paiement_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        order_id = context.user_data.get("webapp_order_id")
+        if not order_id:
+            # Photo reçue hors contexte → message générique
+            await update.message.reply_text(
+                "👋 Tapez /start pour passer une commande !",
+                parse_mode="Markdown",
+            )
+            return
+
+        user      = update.effective_user
+        heure_now = now_str()
+        commande  = charger_commande(order_id)
+
+        # Mise à jour du statut dans orders.json
+        try:
+            with open(ORDERS_FILE) as f:
+                orders = json.load(f)
+            if order_id in orders:
+                orders[order_id]["statut"] = "paiement_recu"
+            with open(ORDERS_FILE, "w") as f:
+                json.dump(orders, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        context.user_data.pop("webapp_order_id", None)
+
+        # Confirmation au client
+        await update.message.reply_text(
+            "╔═══════════════════════════╗\n"
+            "║   🎉  COMMANDE VALIDÉE !  ║\n"
+            "╚═══════════════════════════╝\n\n"
+            f"Merci *{user.first_name}* ! Paiement reçu ✅\n\n"
+            f"🆔 Référence : `{order_id}`\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🕐 *Vous recevrez votre lien de suivi Grab dans les 5 minutes.*\n\n"
+            "_Nouvelle commande : /start_",
+            parse_mode="Markdown",
+        )
+
+        # Notification admin avec reçu + détails
+        username_str = f"@{user.username}" if user.username else "_(aucun)_"
+        budget  = commande.get("budget", 0) if commande else 0
+        prix    = commande.get("prix", 0) if commande else 0
+        cuisine = commande.get("cuisine", "?") if commande else "?"
+        adresse = commande.get("adresse", "?") if commande else "?"
+        lien    = commande.get("lien_commande", "") if commande else ""
+
+        caption = (
+            "🆕 *NOUVELLE COMMANDE — PAIEMENT REÇU*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 Réf    : `{order_id}`\n"
+            f"⏰ Heure  : {heure_now}\n\n"
+            f"👤 *{user.full_name}*  {username_str}\n"
+            f"🆔 ID     : `{user.id}`\n\n"
+            f"🍽️ Cuisine : *{cuisine}*\n"
+            f"🔗 Lien    : {lien or '_(non renseigné)_'}\n"
+            f"📍 Adresse : {adresse}\n\n"
+            f"🛒 Panier  : *{budget:,}฿*\n".replace(",", " ") +
+            f"💰 Payé    : *{prix:,}฿*\n".replace(",", " ") +
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ _Paiement confirmé — à traiter_\n\n"
+            "📤 *Envoyer le suivi au client :*\n"
+            f"`/suivi {order_id} https://lien-grab.com/...`"
+        )
+        await context.bot.send_photo(
+            chat_id=ADMIN_CHAT_ID,
+            photo=update.message.photo[-1].file_id,
+            caption=caption,
+            parse_mode="Markdown",
+        )
 
     app.add_handler(conv)
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, recevoir_webapp))
@@ -707,6 +766,8 @@ def main() -> None:
     app.add_handler(CommandHandler("dispo",  cmd_dispo))
     app.add_handler(CommandHandler("pause",  cmd_pause))
     app.add_handler(CommandHandler("statut", cmd_statut))
+    # Photo hors conversation — reçu Wise webapp OU message générique
+    app.add_handler(MessageHandler(filters.PHOTO, recevoir_paiement_webapp))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, hors_session))
 
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
