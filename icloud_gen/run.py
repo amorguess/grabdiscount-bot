@@ -9,6 +9,7 @@ Usage:
   python3 run.py export    → Exporte emails.txt en tableau propre
 """
 
+from __future__ import annotations
 import asyncio, os, sys, json, time, datetime, re
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
@@ -21,41 +22,125 @@ EDIT_COOKIE_HEADER = """// Semicolon separated Cookie File\n// This file was gen
 # ─────────────────────────────────────────
 #  SELENIUM — LOGIN + COOKIE EXTRACTION
 # ─────────────────────────────────────────
-PROFILE_DIR = os.path.join(BASE_DIR, "chrome_selenium_profile")
+PROFILE_DIR  = os.path.join(BASE_DIR, "chrome_selenium_profile")
+DEBUG_PORT   = 9222   # fixed remote-debugging port so we can always reconnect
 
-def get_driver(headless=False):
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    opts = Options()
-    opts.add_argument(f"user-data-dir={PROFILE_DIR}")
-    opts.add_experimental_option("detach", True)
-    if headless:
-        opts.add_argument("--headless=new")
-    return webdriver.Chrome(options=opts)
+def _kill_existing_chrome():
+    """Kill any Chrome-for-Testing using our profile directory."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "chrome_selenium_profile"],
+            capture_output=True, text=True
+        )
+        for pid in result.stdout.strip().splitlines():
+            try:
+                os.kill(int(pid), 9)
+            except (ValueError, ProcessLookupError):
+                pass
+        if result.stdout.strip():
+            time.sleep(1)   # wait for Chrome to fully release the profile lock
+    except Exception:
+        pass
+
+def _open_chrome():
+    """Launch Chrome with a fixed debug port; returns the subprocess."""
+    import subprocess, glob as _glob
+    # Find chromedriver / chrome-for-testing binary
+    chrome_bin = None
+    patterns = [
+        os.path.expanduser("~/.cache/selenium/chrome/mac-arm64/*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    ]
+    for pat in patterns:
+        found = sorted(_glob.glob(pat), reverse=True)
+        if found:
+            chrome_bin = found[0]
+            break
+    if not chrome_bin:
+        raise RuntimeError("Chrome binary introuvable.")
+
+    cmd = [
+        chrome_bin,
+        f"--user-data-dir={PROFILE_DIR}",
+        f"--remote-debugging-port={DEBUG_PORT}",
+        "--remote-allow-origins=*",
+        "--no-first-run",
+        "--disable-default-apps",
+        "--disable-sync",
+        "https://www.icloud.com/settings/",
+    ]
+    return subprocess.Popen(cmd)
+
+def _cdp_get_icloud_cookies() -> list[dict]:
+    """Connect to Chrome CDP and return all iCloud cookies."""
+    import urllib.request, json, websocket as ws_lib
+
+    try:
+        with urllib.request.urlopen(f"http://localhost:{DEBUG_PORT}/json", timeout=5) as r:
+            tabs = json.loads(r.read())
+    except Exception:
+        return []
+
+    ws_url = None
+    for t in tabs:
+        if t.get("webSocketDebuggerUrl"):
+            ws_url = t["webSocketDebuggerUrl"]
+            break
+    if not ws_url:
+        return []
+
+    result = []
+    try:
+        ws = ws_lib.create_connection(ws_url, timeout=5)
+        ws.send(json.dumps({"id": 1, "method": "Network.getAllCookies"}))
+        for _ in range(10):
+            msg = json.loads(ws.recv())
+            if msg.get("id") == 1:
+                all_cookies = msg.get("result", {}).get("cookies", [])
+                result = [c for c in all_cookies
+                          if "icloud" in c.get("domain","").lower()
+                          or "apple" in c.get("domain","").lower()]
+                break
+        ws.close()
+    except Exception:
+        pass
+    return result
+
+def _save_cookies(cookies: list[dict]):
+    """Save cookie list → cookie.txt in HTTP Cookie header format."""
+    parts = [f'{c["name"]}={c["value"]}' for c in cookies]
+    line = "; ".join(parts)
+    with open(COOKIE_FILE, "w", encoding="utf-8") as f:
+        f.write(EDIT_COOKIE_HEADER + "\n" + line)
 
 def cmd_login():
-    """Ouvre Chrome sur iCloud.com/settings pour connexion manuelle."""
-    print("\n🌐 Ouverture de Chrome — connectez-vous à iCloud puis appuyez Entrée ici.\n")
-    driver = get_driver(headless=False)
-    driver.get("https://www.icloud.com/settings/")
-    input("   ✅ Une fois connecté sur iCloud, appuyez sur Entrée pour extraire les cookies : ")
+    """Ouvre Chrome sur iCloud.com, attend la connexion, extrait les cookies automatiquement."""
+    _kill_existing_chrome()
+    print("\n🌐 Ouverture de Chrome…\n   → Connectez-vous à iCloud.com dans la fenêtre qui s'ouvre.")
+    print("   → Le script détectera automatiquement votre connexion (max 3 min).\n")
 
-    cookies = driver.get_cookies()
-    if not cookies:
-        print("❌ Aucun cookie récupéré. Assurez-vous d'être bien connecté à iCloud.")
-        driver.quit()
-        return
+    proc = _open_chrome()
+    deadline = time.time() + 180  # 3 minutes
+    last_count = 0
 
-    cookie_line = ";".join(
-        f'{c["name"]}="{c["value"].replace(chr(34), "").strip()}"'
-        for c in cookies
-    ) + ";"
+    while time.time() < deadline:
+        time.sleep(3)
+        cookies = _cdp_get_icloud_cookies()
+        session_ok = any(c["name"] == "X-APPLE-DS-WEB-SESSION-TOKEN" for c in cookies)
+        if session_ok and len(cookies) != last_count:
+            last_count = len(cookies)
+            print(f"  ⏳ {len(cookies)} cookies iCloud détectés… vérification session…")
+            # Give the page 2 more seconds to finish loading all cookies
+            time.sleep(2)
+            cookies = _cdp_get_icloud_cookies()
+            _save_cookies(cookies)
+            print(f"\n✅ {len(cookies)} cookies sauvegardés dans cookie.txt !")
+            print("   Vous pouvez maintenant lancer : python3 run.py generate\n")
+            return
 
-    with open(COOKIE_FILE, "w", encoding="utf-8") as f:
-        f.write(EDIT_COOKIE_HEADER + "\n" + cookie_line)
-
-    print(f"✅ {len(cookies)} cookies sauvegardés dans cookie.txt")
-    driver.quit()
+    proc.terminate()
+    print("❌ Délai dépassé. Relancez la commande et connectez-vous rapidement.")
 
 # ─────────────────────────────────────────
 #  iCLOUD API
@@ -76,14 +161,20 @@ import aiohttp, ssl, certifi
 class ICloudHME:
     base_v1 = "https://p68-maildomainws.icloud.com/v1/hme"
     base_v2 = "https://p68-maildomainws.icloud.com/v2/hme"
-    params   = {"clientBuildNumber":"2413Project28","clientMasteringNumber":"2413B20","clientId":"","dsid":""}
+    # Build number and dsid are patched dynamically from the cookie
+    params   = {"clientBuildNumber":"2612Build21","clientMasteringNumber":"2612Build21","clientId":"","dsid":""}
 
     def __init__(self, cookies: str):
         self.cookies = cookies.strip()
+        # Auto-extract dsid from X-APPLE-WEBAUTH-USER cookie value
+        import re as _re
+        m = _re.search(r'd=(\d+)', self.cookies)
+        if m:
+            self.__class__.params = dict(self.params, dsid=m.group(1))
 
     async def __aenter__(self):
         ssl_ctx   = ssl.create_default_context(cafile=certifi.where())
-        connector = aiohttp.TCPConnector(ssl_context=ssl_ctx)
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         self.session = aiohttp.ClientSession(
             headers={
                 "User-Agent":    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/123 Safari/537.36",
@@ -108,8 +199,11 @@ class ICloudHME:
         except Exception as e:
             print(f"  ⚠ generate error: {e}")
             return None
-        if not data.get("success"):
-            reason = (data.get("error") or {}).get("errorMessage") or data.get("reason","?")
+        if not isinstance(data, dict) or not data.get("success"):
+            err = data.get("error") if isinstance(data, dict) else data
+            reason = (err if isinstance(err, str) else
+                      (err or {}).get("errorMessage") if isinstance(err, dict) else str(err))
+            reason = reason or (data.get("reason","?") if isinstance(data, dict) else "?")
             print(f"  ⚠ generate failed: {reason}")
             return None
         email = data["result"]["hme"]
@@ -121,8 +215,11 @@ class ICloudHME:
         except Exception as e:
             print(f"  ⚠ reserve error for {email}: {e}")
             return None
-        if not res.get("success"):
-            reason = (res.get("error") or {}).get("errorMessage") or res.get("reason","?")
+        if not isinstance(res, dict) or not res.get("success"):
+            err = res.get("error") if isinstance(res, dict) else res
+            reason = (err if isinstance(err, str) else
+                      (err or {}).get("errorMessage") if isinstance(err, dict) else str(err))
+            reason = reason or (res.get("reason","?") if isinstance(res, dict) else "?")
             print(f"  ⚠ reserve failed for {email}: {reason}")
             return None
         return email

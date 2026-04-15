@@ -1,0 +1,8 @@
+.env
+*.pyc
+__pycache__/
+orders.json
+messages.json
+status.json
+icloud_gen/emails.txt
+icloud_gen/emails_export.txt

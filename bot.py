@@ -1,17 +1,21 @@
 """
 ╔══════════════════════════════════════════════════════════╗
-║        GRABDISCOUNT BOT — v3                            ║
+║        GRABDISCOUNT BOT — v4                            ║
 ╚══════════════════════════════════════════════════════════╝
 LANCEMENT : python3 bot.py
 """
 
-import os
-import re
-import json
-import logging
-import random
-import string
+from __future__ import annotations
+import os, re, json, logging, random, string, time
 from datetime import datetime
+from pathlib import Path
+
+# Charge .env si présent (local / Raspberry Pi)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
@@ -22,11 +26,12 @@ from telegram.ext import (
 WEBAPP_URL = "https://amorguess.github.io/grabdiscount-bot/webapp/"
 
 # ──────────────────────────────────────────────────────────
-#  CONFIG
+#  CONFIG  (toujours depuis l'env — jamais en dur)
 # ──────────────────────────────────────────────────────────
 
-BOT_TOKEN     = os.environ.get("BOT_TOKEN",     "8796586342:AAG4HxelgPzuDVLCfZMzcYHRDGRH_C4tig4")
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", 8711205448))
+BOT_TOKEN     = os.environ["BOT_TOKEN"]                        # obligatoire
+ADMIN_CHAT_ID = int(os.environ["ADMIN_CHAT_ID"])               # obligatoire
+CHANNEL_ID    = int(os.environ.get("CHANNEL_ID", -1003910907077))
 
 # (panier minimum, prix client, lien Wise)
 BUDGETS = [
@@ -63,8 +68,13 @@ logger = logging.getLogger(__name__)
 #  STATUT ADMIN
 # ──────────────────────────────────────────────────────────
 
-DATA_DIR    = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
-STATUS_FILE = os.path.join(DATA_DIR, "status.json")
+DATA_DIR     = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+STATUS_FILE  = os.path.join(DATA_DIR, "status.json")
+MESSAGES_FILE = os.path.join(DATA_DIR, "messages.json")
+
+# ── Rate limiting : max 1 transfer admin toutes les 30s par user ──
+_last_forward: dict[int, float] = {}
+FORWARD_COOLDOWN = 30   # secondes
 
 def get_statut() -> bool:
     """Retourne True si l'admin est disponible, False sinon."""
@@ -97,8 +107,14 @@ def msg_indispo(lang: str) -> str:
 def gen_order_id() -> str:
     return "CMD-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
+# Format d'affichage (pour les clients)
 def now_str() -> str:
     return datetime.now().strftime("%d/%m/%Y à %H:%M")
+
+# Format ISO interne — parseable sans ambiguïté
+TS_FMT = "%Y-%m-%dT%H:%M:%S"
+def now_ts() -> str:
+    return datetime.now().strftime(TS_FMT)
 
 def is_url(text: str) -> bool:
     return bool(re.match(r"https?://\S+", text.strip()))
@@ -109,40 +125,108 @@ def get_wise_link(budget: int) -> str:
 def get_prix_client(budget: int) -> int:
     return next((prix for m, prix, _ in BUDGETS if m == budget), 0)
 
-ORDERS_FILE  = os.path.join(DATA_DIR, "orders.json")
+ORDERS_FILE   = os.path.join(DATA_DIR, "orders.json")
 CUISINES_FILE = os.path.join(DATA_DIR, "cuisines.json")
 
-def sauvegarder_commande(order_id: str, chat_id: int, data: dict) -> None:
-    """Sauvegarde la commande dans orders.json pour pouvoir envoyer le suivi."""
+# ── Cache mémoire (survive aux read/write, résiste aux erreurs disque) ──
+_orders_cache: dict = {}
+
+def sauvegarder_commande(order_id: str, chat_id: int, data: dict, statut: str = "paiement_recu") -> None:
+    """Sauvegarde la commande en mémoire + sur disque."""
+    entry = {
+        "chat_id": chat_id,
+        "nom":     data.get("nom", "Client"),
+        "adresse": data.get("adresse", "?"),
+        "cuisine": data.get("cuisine", "?"),
+        "budget":  data.get("budget", 0),
+        "prix":    data.get("prix", 0),
+        "heure":   now_str(),      # affichage humain
+        "ts":      now_ts(),       # timestamp ISO pour calculs
+        "statut":  statut,
+    }
+    _orders_cache[order_id] = entry
     try:
         try:
             with open(ORDERS_FILE, "r") as f:
                 orders = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             orders = {}
-
-        orders[order_id] = {
-            "chat_id": chat_id,
-            "nom":     data.get("nom", "Client"),
-            "adresse": data.get("adresse", "?"),
-            "cuisine": data.get("cuisine", "?"),
-            "budget":  data.get("budget", 0),
-            "prix":    data.get("prix", 0),
-            "heure":   now_str(),
-        }
+        orders.update(_orders_cache)   # merge cache → fichier
         with open(ORDERS_FILE, "w") as f:
             json.dump(orders, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Erreur sauvegarde commande : {e}")
 
-def charger_commande(order_id: str):
-    """Charge une commande depuis orders.json."""
+def mettre_a_jour_statut(order_id: str, statut: str) -> None:
+    """Met à jour le statut d'une commande (cache + disque)."""
+    if order_id in _orders_cache:
+        _orders_cache[order_id]["statut"] = statut
     try:
         with open(ORDERS_FILE, "r") as f:
             orders = json.load(f)
-        return orders.get(order_id)
+        if order_id in orders:
+            orders[order_id]["statut"] = statut
+        with open(ORDERS_FILE, "w") as f:
+            json.dump(orders, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Erreur mise à jour statut : {e}")
+
+def charger_commande(order_id: str):
+    """Charge une commande : cache mémoire en priorité, puis disque."""
+    if order_id in _orders_cache:
+        return _orders_cache[order_id]
+    try:
+        with open(ORDERS_FILE, "r") as f:
+            orders = json.load(f)
+        entry = orders.get(order_id)
+        if entry:
+            _orders_cache[order_id] = entry   # re-hydrate le cache
+        return entry
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+
+def log_message(user_id: int, name: str, username: str,
+                text: str, direction: str = "client") -> None:
+    """Enregistre un message dans messages.json pour le dashboard."""
+    try:
+        try:
+            with open(MESSAGES_FILE, "r") as f:
+                msgs = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            msgs = {}
+
+        uid = str(user_id)
+        if uid not in msgs:
+            msgs[uid] = {"name": name, "username": username, "messages": [], "unread": 0}
+        msgs[uid]["name"]     = name
+        msgs[uid]["username"] = username
+        msgs[uid]["messages"].append({
+            "text": text,
+            "ts":   now_ts(),
+            "heure": now_str(),
+            "from": direction,   # "client" ou "admin"
+            "read": direction == "admin",
+        })
+        if direction == "client":
+            msgs[uid]["unread"] = msgs[uid].get("unread", 0) + 1
+
+        # Garde les 100 derniers messages par user
+        msgs[uid]["messages"] = msgs[uid]["messages"][-100:]
+
+        with open(MESSAGES_FILE, "w") as f:
+            json.dump(msgs, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"log_message: {e}")
+
+
+def _precharger_cache() -> None:
+    """Charge orders.json en mémoire au démarrage."""
+    try:
+        with open(ORDERS_FILE, "r") as f:
+            _orders_cache.update(json.load(f))
+        logger.info(f"Cache orders chargé : {len(_orders_cache)} commandes")
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
 
 # ──────────────────────────────────────────────────────────
 #  ÉTAPE 1 — ACCUEIL
@@ -364,7 +448,7 @@ async def recevoir_preuve_paiement(update: Update, context: ContextTypes.DEFAULT
 
     # ── Sauvegarde commande pour le suivi ──────────────────
     data["nom"] = user.full_name
-    sauvegarder_commande(order_id, user.id, data)
+    sauvegarder_commande(order_id, user.id, data, statut="paiement_recu")
 
     # ── Confirmation client ────────────────────────────────
     await update.message.reply_text(
@@ -477,18 +561,43 @@ async def cmd_commandes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Aucune commande enregistrée.")
         return
 
-    now_ts = datetime.now()
+    now_dt = datetime.now()
     lignes = []
     for oid, cmd in orders.items():
         try:
-            cmd_dt = datetime.strptime(cmd.get("heure", ""), "%d/%m %H:%M").replace(year=now_ts.year)
-            if (now_ts - cmd_dt).total_seconds() > 86400:
+            # Essaie d'abord le champ ts (ISO), sinon le champ heure (ancien format)
+            ts_str = cmd.get("ts") or cmd.get("heure", "")
+            if "T" in ts_str:
+                cmd_dt = datetime.strptime(ts_str, TS_FMT)
+            else:
+                # ancien format "d/m/Y à H:M" ou "d/m H:M"
+                for fmt in ("%d/%m/%Y à %H:%M", "%d/%m %H:%M"):
+                    try:
+                        cmd_dt = datetime.strptime(ts_str, fmt)
+                        if cmd_dt.year == 1900:
+                            cmd_dt = cmd_dt.replace(year=now_dt.year)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    continue
+            if (now_dt - cmd_dt).total_seconds() > 86400:
                 continue
         except Exception:
             continue
+
+        statut_emoji = {
+            "paiement_recu":        "💰",
+            "en_attente_paiement":  "⏳",
+            "en_cours":             "🛵",
+            "livre":                "✅",
+            "annule":               "❌",
+        }.get(cmd.get("statut", ""), "❓")
+
         lignes.append(
-            f"🆔 `{oid}` | {cmd.get('nom','?')} | {cmd.get('cuisine','?')} | "
-            f"{cmd.get('adresse','?')} | {cmd.get('statut','?')} | {cmd.get('heure','?')}"
+            f"{statut_emoji} `{oid}` | *{cmd.get('nom','?')}* | "
+            f"{cmd.get('cuisine','?')} | {cmd.get('adresse','?')[:25]} | "
+            f"{cmd.get('prix','?')}฿ | {cmd.get('heure','?')}"
         )
 
     if not lignes:
@@ -565,6 +674,24 @@ async def envoyer_suivi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 #  ANNULATION
 # ──────────────────────────────────────────────────────────
 
+async def _notifier_annulation(context, user) -> None:
+    """Notifie l'admin qu'un client a annulé."""
+    try:
+        username = f"@{user.username}" if user.username else "_(aucun)_"
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=(
+                "🚫 *COMMANDE ANNULÉE*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *{user.full_name}*  {username}\n"
+                f"🆔 ID : `{user.id}`\n"
+                f"⏰ {now_str()}"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
 async def annuler_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -572,6 +699,8 @@ async def annuler_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "❌ *Commande annulée.*\n\nTapez /start pour recommencer.",
         parse_mode="Markdown",
     )
+    await _notifier_annulation(context, update.effective_user)
+    context.user_data.clear()
     return ConversationHandler.END
 
 
@@ -580,7 +709,19 @@ async def annuler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "❌ *Commande annulée.*\n\nTapez /start pour recommencer.",
         parse_mode="Markdown",
     )
+    context.user_data.clear()
     return ConversationHandler.END
+
+async def annuler_impossible(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Appelé si le client tente d'annuler après l'envoi du lien de paiement."""
+    await update.message.reply_text(
+        "⚠️ *Annulation impossible.*\n\n"
+        "Le lien de paiement a déjà été généré.\n\n"
+        "Si vous avez un problème, contactez-nous :\n"
+        "`/tchat votre message`",
+        parse_mode="Markdown",
+    )
+    return ATTENTE_PAIEMENT  # reste dans l'état, attend le reçu
 
 # ──────────────────────────────────────────────────────────
 #  AIDE
@@ -601,9 +742,184 @@ async def aide(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "7️⃣ Envoyer le reçu de paiement\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "❌ /annuler — Annuler la commande\n"
-        "💬 Un problème ? Contactez-nous.",
+        "💬 /tchat — Contacter le service client",
         parse_mode="Markdown",
     )
+
+# ──────────────────────────────────────────────────────────
+#  CHAT CLIENT ↔ ADMIN
+# ──────────────────────────────────────────────────────────
+
+async def cmd_tchat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Client envoie un message libre à l'admin via /tchat."""
+    user  = update.effective_user
+    texte = " ".join(context.args) if context.args else ""
+
+    if not texte:
+        await update.message.reply_text(
+            "💬 *Contacter le service client*\n\n"
+            "Tapez votre message après la commande :\n"
+            "`/tchat Votre message ici`\n\n"
+            "_Exemple : /tchat Je voudrais modifier mon adresse_",
+            parse_mode="Markdown",
+        )
+        return
+
+    username = f"@{user.username}" if user.username else ""
+    log_message(user.id, user.full_name, username, texte, "client")
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=(
+                "💬 *MESSAGE CLIENT*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *{user.full_name}*  {username or '_(aucun)_'}\n"
+                f"🆔 ID : `{user.id}`\n\n"
+                f"✉️ {texte}\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📤 Répondre : `/rep {user.id} votre réponse`\n"
+                "📊 _Ou depuis le dashboard_"
+            ),
+            parse_mode="Markdown",
+        )
+        await update.message.reply_text(
+            "✅ *Message envoyé au service client !*\n\n"
+            "Nous vous répondrons dans les plus brefs délais. 🙏",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Erreur tchat : {e}")
+        await update.message.reply_text("❌ Erreur lors de l'envoi, réessayez.")
+
+
+async def cmd_rep(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin répond à un client.
+    Usage : /rep USER_ID message
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/rep USER_ID votre message`\n\n"
+            "_Exemple : /rep 123456789 Votre commande est en route !_",
+            parse_mode="Markdown",
+        )
+        return
+
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID client invalide (doit être un nombre).")
+        return
+
+    message = " ".join(args[1:])
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "╔═══════════════════════════╗\n"
+                "║   💬  SERVICE CLIENT      ║\n"
+                "╚═══════════════════════════╝\n\n"
+                f"{message}\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "_Pour répondre : /tchat votre message_"
+            ),
+            parse_mode="Markdown",
+        )
+        # Log la réponse admin dans messages.json
+        log_message(target_id, "Client", "", message, "admin")
+        await update.message.reply_text(
+            f"✅ *Réponse envoyée* à `{target_id}`",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erreur envoi : {e}")
+
+# ──────────────────────────────────────────────────────────
+#  COMMANDES CANAL
+# ──────────────────────────────────────────────────────────
+
+async def cmd_canal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin poste un message personnalisé dans le canal.
+    Usage : /canal Votre message ici
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/canal votre message`",
+            parse_mode="Markdown",
+        )
+        return
+    msg = " ".join(context.args)
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=msg,
+            parse_mode="Markdown",
+        )
+        await update.message.reply_text("✅ Message envoyé dans le canal !")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erreur : {e}")
+
+
+async def cmd_promo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin poste une offre promo dans le canal."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    promo_text = (
+        "🛵 *GrabDiscount — Offre du moment !*\n\n"
+        "🎁 Commandez via notre service et *économisez 50%* sur votre repas Grab !\n\n"
+        "✅ 500 ฿ pour un panier de 1 000 ฿\n"
+        "✅ 1 000 ฿ pour un panier de 2 000 ฿\n\n"
+        "📲 Démarrez votre commande ici 👇\n"
+        "→ @GrabDiscountBot\n\n"
+        "🏙️ Service disponible partout en Thaïlande\n"
+        "⏱️ Réponse en moins de 5 minutes"
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=promo_text,
+            parse_mode="Markdown",
+        )
+        await update.message.reply_text("✅ Offre promo envoyée dans le canal !")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erreur : {e}")
+
+
+async def cmd_annonce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin poste le message de bienvenue/présentation dans le canal."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    annonce = (
+        "🛵 *Bienvenue sur GrabDiscount !*\n\n"
+        "Nous commandons sur Grab à votre place avec nos comptes premium "
+        "et vous faisons profiter de *-50% sur tous vos repas*.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 *Comment ça marche ?*\n"
+        "1️⃣ Vous choisissez votre restaurant\n"
+        "2️⃣ Vous payez 500 ฿ (au lieu de 1 000 ฿)\n"
+        "3️⃣ On passe la commande pour vous sur Grab\n"
+        "4️⃣ Vous recevez votre repas 🍜\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📲 Pour commander : @GrabDiscountBot\n\n"
+        "🇫🇷 Service en français · 🏙️ Toute la Thaïlande\n"
+        "📢 Activez les notifications pour nos offres !"
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=annonce,
+            parse_mode="Markdown",
+        )
+        await update.message.reply_text("✅ Annonce de bienvenue envoyée dans le canal !")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erreur : {e}")
+
 
 # ──────────────────────────────────────────────────────────
 #  MAIN
@@ -636,8 +952,11 @@ def main() -> None:
             ],
             ATTENTE_PAIEMENT: [
                 MessageHandler(filters.PHOTO, recevoir_preuve_paiement),
+                # /annuler bloqué une fois le lien de paiement envoyé
+                CommandHandler("annuler", annuler_impossible),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text(
-                    "📸 Merci d'envoyer le *screenshot de votre reçu Wise* pour valider.",
+                    "📸 Merci d'envoyer le *screenshot de votre reçu Wise* pour valider.\n\n"
+                    "_Si vous avez un problème : /tchat votre message_",
                     parse_mode="Markdown"
                 )),
             ],
@@ -647,22 +966,70 @@ def main() -> None:
             CommandHandler("start",   start),
         ],
         allow_reentry=True,
+        conversation_timeout=3600,   # 1h → session zombie nettoyée auto
     )
 
-    # Handler global — capte tout message hors conversation
+    # Handler global — capte tout message texte hors conversation
     async def hors_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(
-            "👋 Tapez /start pour passer une commande !",
-            parse_mode="Markdown",
-        )
+        if not update.message:
+            return
+        user  = update.effective_user
+        texte = (update.message.text or "").strip()
+
+        # Ignore les messages de l'admin lui-même
+        if user.id == ADMIN_CHAT_ID:
+            return
+
+        username = f"@{user.username}" if user.username else ""
+
+        if texte:
+            # ── Log pour le dashboard ──────────────────────
+            log_message(user.id, user.full_name, username, texte, "client")
+
+            # ── Rate limiting : max 1 notif admin / 30s ───
+            now_t = time.time()
+            last  = _last_forward.get(user.id, 0)
+            if now_t - last >= FORWARD_COOLDOWN:
+                _last_forward[user.id] = now_t
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_CHAT_ID,
+                        text=(
+                            "💬 *MESSAGE CLIENT*\n"
+                            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"👤 *{user.full_name}*  {username or '_(aucun)_'}\n"
+                            f"🆔 ID : `{user.id}`\n\n"
+                            f"✉️ {texte}\n\n"
+                            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📤 Répondre : `/rep {user.id} votre réponse`\n"
+                            "📊 _Ou depuis le dashboard_"
+                        ),
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.error(f"Forward hors_session : {e}")
+
+            await update.message.reply_text(
+                "✅ *Message transmis à notre équipe !*\n\n"
+                "Nous vous répondrons très rapidement. 🙏\n\n"
+                "_Pour passer une commande : /start_",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                "👋 Tapez /start pour passer une commande !",
+                parse_mode="Markdown",
+            )
 
     # ── Handler Mini App (web_app_data) ──────────────────────
     async def recevoir_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Reçoit les données envoyées par tg.sendData() depuis la Mini App."""
-        context.user_data.clear()
+        # Ne pas effacer user_data (Bug #5) — juste les clés webapp
+        context.user_data.pop("webapp_order_id", None)
+        context.user_data.pop("webapp_pending", None)
+
         data_str = update.message.web_app_data.data
         user = update.effective_user
-        heure = datetime.now().strftime("%d/%m %H:%M")
         try:
             data = json.loads(data_str)
         except Exception:
@@ -678,77 +1045,137 @@ def main() -> None:
             cuisine  = data.get("cuisine", "?")
             address  = data.get("address", "?")
             link     = data.get("link", "")
+            wise_link = get_wise_link(budget)
 
-            # Sauvegarde en attente de preuve de paiement
-            orders = {}
-            try:
-                with open(ORDERS_FILE) as f:
-                    orders = json.load(f)
-            except Exception:
-                pass
-            orders[order_id] = {
-                "order_id": order_id,
-                "chat_id":  user.id,
-                "nom":      user.full_name,
-                "username": user.username or "",
-                "budget": budget, "prix": prix,
-                "cuisine": cuisine, "adresse": address,
+            # Sauvegarde en attente de confirmation (avant paiement)
+            sauvegarder_commande(order_id, user.id, {
+                "nom": user.full_name,
+                "adresse": address,
+                "cuisine": cuisine,
+                "budget": budget,
+                "prix": prix,
                 "lien_commande": link,
-                "heure": heure, "statut": "en_attente_paiement",
-            }
-            with open(ORDERS_FILE, "w") as f:
-                json.dump(orders, f, ensure_ascii=False, indent=2)
+            }, statut="en_attente_confirmation")
 
-            # Mémorise dans user_data pour capturer la preuve de paiement
-            context.user_data["webapp_order_id"] = order_id
+            # Mémorise dans user_data
+            context.user_data["webapp_order_id"]  = order_id
+            context.user_data["webapp_wise_link"]  = wise_link
+            context.user_data["webapp_pending"]    = True   # avant paiement → annulation possible
 
-            # Confirmation client — lui demande d'envoyer le reçu
+            # ── Étape confirmation AVANT paiement (annulation encore possible) ──
+            keyboard = [[
+                InlineKeyboardButton("✅ Confirmer & Payer", callback_data=f"webapp_confirm_{order_id}"),
+                InlineKeyboardButton("❌ Annuler",           callback_data=f"webapp_cancel_{order_id}"),
+            ]]
             await update.message.reply_text(
                 "╔═══════════════════════════╗\n"
-                "║   💳  PAIEMENT EN COURS   ║\n"
+                "║   📋  RÉCAPITULATIF       ║\n"
                 "╚═══════════════════════════╝\n\n"
-                f"🆔 Réf : `{order_id}`\n"
-                f"🍽️ {cuisine}\n"
-                f"📍 {address}\n"
-                f"💰 À payer : *{prix:,}฿* via Wise\n\n".replace(",", " ") +
+                f"🆔 Réf     : `{order_id}`\n"
+                f"🍽️ Cuisine : *{cuisine}*\n"
+                f"📍 Adresse : {address}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "📸 *Envoyez le screenshot de votre reçu Wise*\n"
-                "pour que nous validions et passions la commande ! ✅",
+                f"🛒 Panier Grab : *{budget:,}฿*\n".replace(",", " ") +
+                f"💰 *Vous payez  : {prix:,}฿*\n".replace(",", " ") +
+                f"💸 Économie    : {budget - prix:,}฿\n".replace(",", " ") +
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "👇 *Tout est correct ? Vous pouvez encore annuler.*",
                 parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
             )
         else:
             await update.message.reply_text("👋 Commande reçue !")
+
+    # ── Callback confirmation/annulation webapp ──────────────
+    async def webapp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        data = query.data  # "webapp_confirm_CMD-XXXXX" ou "webapp_cancel_CMD-XXXXX"
+
+        if data.startswith("webapp_confirm_"):
+            order_id  = data.replace("webapp_confirm_", "")
+            wise_link = context.user_data.get("webapp_wise_link", "")
+            context.user_data["webapp_pending"] = False  # plus d'annulation possible
+
+            # Mise à jour statut → en attente de paiement
+            mettre_a_jour_statut(order_id, "en_attente_paiement")
+
+            await query.edit_message_text(
+                "╔═══════════════════════════╗\n"
+                "║   💳  PAIEMENT            ║\n"
+                "╚═══════════════════════════╝\n\n"
+                f"🆔 Réf : `{order_id}`\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "👇 *Payez via ce lien Wise :*\n"
+                f"{wise_link}\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "📸 Une fois payé, *envoyez le screenshot de votre reçu*\n"
+                "pour valider votre commande. ✅\n\n"
+                "⚠️ _Annulation impossible après cette étape_",
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("webapp_cancel_"):
+            order_id = data.replace("webapp_cancel_", "")
+            # Annulation valide : encore avant paiement
+            if context.user_data.get("webapp_pending", True):
+                mettre_a_jour_statut(order_id, "annule")
+                context.user_data.pop("webapp_order_id", None)
+                context.user_data.pop("webapp_wise_link", None)
+                context.user_data.pop("webapp_pending", None)
+                await query.edit_message_text(
+                    "❌ *Commande annulée.*\n\nTapez /start pour recommencer.",
+                    parse_mode="Markdown",
+                )
+            else:
+                await query.edit_message_text(
+                    "⚠️ *Annulation impossible.*\nLe paiement est déjà en cours.\n\n"
+                    "Contactez-nous : `/tchat votre message`",
+                    parse_mode="Markdown",
+                )
 
     # ── Reçu Wise après flux Mini App ──────────────────────
     async def recevoir_paiement_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = context.user_data.get("webapp_order_id")
         if not order_id:
-            # Cherche une commande récente (< 2h) en attente de paiement pour ce user
-            user_id = update.effective_user.id
+            # Cherche dans le cache/fichier une commande récente (< 4h) en attente de paiement
+            user_id  = update.effective_user.id
+            now_dt   = datetime.now()
+            # Parcours cache mémoire en priorité
+            all_orders = {**_orders_cache}
             try:
                 with open(ORDERS_FILE) as f:
-                    orders = json.load(f)
-                now_ts = datetime.now()
-                for oid, cmd in orders.items():
-                    if (
-                        cmd.get("chat_id") == user_id
-                        and cmd.get("statut") == "en_attente_paiement"
-                    ):
-                        try:
-                            cmd_dt = datetime.strptime(cmd.get("heure", ""), "%d/%m %H:%M").replace(
-                                year=now_ts.year
-                            )
-                            diff = (now_ts - cmd_dt).total_seconds()
-                            if 0 <= diff <= 7200:
-                                order_id = oid
-                                context.user_data["webapp_order_id"] = order_id
-                                break
-                        except Exception:
-                            pass
+                    all_orders.update(json.load(f))
             except Exception:
                 pass
+            for oid, cmd in all_orders.items():
+                if cmd.get("chat_id") != user_id:
+                    continue
+                if cmd.get("statut") != "en_attente_paiement":
+                    continue
+                try:
+                    ts_str = cmd.get("ts") or cmd.get("heure", "")
+                    if "T" in ts_str:
+                        cmd_dt = datetime.strptime(ts_str, TS_FMT)
+                    else:
+                        for fmt in ("%d/%m/%Y à %H:%M", "%d/%m %H:%M"):
+                            try:
+                                cmd_dt = datetime.strptime(ts_str, fmt)
+                                if cmd_dt.year == 1900:
+                                    cmd_dt = cmd_dt.replace(year=now_dt.year)
+                                break
+                            except ValueError:
+                                continue
+                        else:
+                            continue
+                    if 0 <= (now_dt - cmd_dt).total_seconds() <= 14400:  # 4h
+                        order_id = oid
+                        context.user_data["webapp_order_id"] = order_id
+                        break
+                except Exception:
+                    pass
+
         if not order_id:
-            # Photo reçue hors contexte → message générique
             await update.message.reply_text(
                 "👋 Tapez /start pour passer une commande !",
                 parse_mode="Markdown",
@@ -759,18 +1186,11 @@ def main() -> None:
         heure_now = now_str()
         commande  = charger_commande(order_id)
 
-        # Mise à jour du statut dans orders.json
-        try:
-            with open(ORDERS_FILE) as f:
-                orders = json.load(f)
-            if order_id in orders:
-                orders[order_id]["statut"] = "paiement_recu"
-            with open(ORDERS_FILE, "w") as f:
-                json.dump(orders, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
+        # Mise à jour du statut via la fonction dédiée
+        mettre_a_jour_statut(order_id, "paiement_recu")
         context.user_data.pop("webapp_order_id", None)
+        context.user_data.pop("webapp_wise_link", None)
+        context.user_data.pop("webapp_pending", None)
 
         # Confirmation au client
         await update.message.reply_text(
@@ -817,15 +1237,25 @@ def main() -> None:
             parse_mode="Markdown",
         )
 
+    # Préchargement du cache mémoire depuis le disque
+    _precharger_cache()
+
     app.add_handler(conv)
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, recevoir_webapp))
-    app.add_handler(CommandHandler("aide",   aide))
-    app.add_handler(CommandHandler("help",   aide))
-    app.add_handler(CommandHandler("suivi",  envoyer_suivi))
+    # Callbacks inline (confirmation/annulation webapp)
+    app.add_handler(CallbackQueryHandler(webapp_callback, pattern=r"^webapp_(confirm|cancel)_"))
+    app.add_handler(CommandHandler("aide",      aide))
+    app.add_handler(CommandHandler("help",      aide))
+    app.add_handler(CommandHandler("suivi",     envoyer_suivi))
     app.add_handler(CommandHandler("dispo",     cmd_dispo))
     app.add_handler(CommandHandler("pause",     cmd_pause))
     app.add_handler(CommandHandler("statut",    cmd_statut))
     app.add_handler(CommandHandler("commandes", cmd_commandes))
+    app.add_handler(CommandHandler("tchat",     cmd_tchat))
+    app.add_handler(CommandHandler("rep",       cmd_rep))
+    app.add_handler(CommandHandler("canal",     cmd_canal))
+    app.add_handler(CommandHandler("promo",     cmd_promo))
+    app.add_handler(CommandHandler("annonce",   cmd_annonce))
     # Photo hors conversation — reçu Wise webapp OU message générique
     app.add_handler(MessageHandler(filters.PHOTO, recevoir_paiement_webapp))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, hors_session))
