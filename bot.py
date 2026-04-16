@@ -6,7 +6,7 @@ LANCEMENT : python3 bot.py
 """
 
 from __future__ import annotations
-import os, re, json, logging, random, string, time
+import os, re, json, logging, random, string, time, fcntl
 from datetime import datetime
 from pathlib import Path
 
@@ -128,11 +128,40 @@ def get_prix_client(budget: int) -> int:
 ORDERS_FILE   = os.path.join(DATA_DIR, "orders.json")
 CUISINES_FILE = os.path.join(DATA_DIR, "cuisines.json")
 
+# ── Verrou global pour toutes les I/O JSON (évite les race conditions) ──
+_io_lock = __import__("threading").Lock()
+
 # ── Cache mémoire (survive aux read/write, résiste aux erreurs disque) ──
 _orders_cache: dict = {}
 
+# ── Validation format order_id ─────────────────────────────
+ORDER_ID_RE = re.compile(r'^CMD-[A-Z0-9]{5}$')
+
+def _read_json(path: str, default):
+    """Lecture JSON thread-safe."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_SH)
+            data = json.load(f)
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+def _write_json(path: str, data) -> None:
+    """Écriture atomique JSON thread-safe : tmp → rename."""
+    tmp = path + ".tmp"
+    with _io_lock:
+        with open(tmp, "w", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+            fcntl.flock(f, fcntl.LOCK_UN)
+        os.replace(tmp, path)   # atomique sur POSIX
+
 def sauvegarder_commande(order_id: str, chat_id: int, data: dict, statut: str = "paiement_recu") -> None:
-    """Sauvegarde la commande en mémoire + sur disque."""
+    """Sauvegarde la commande en mémoire + sur disque (atomique)."""
     entry = {
         "chat_id": chat_id,
         "nom":     data.get("nom", "Client"),
@@ -140,34 +169,27 @@ def sauvegarder_commande(order_id: str, chat_id: int, data: dict, statut: str = 
         "cuisine": data.get("cuisine", "?"),
         "budget":  data.get("budget", 0),
         "prix":    data.get("prix", 0),
-        "heure":   now_str(),      # affichage humain
-        "ts":      now_ts(),       # timestamp ISO pour calculs
+        "heure":   now_str(),
+        "ts":      now_ts(),
         "statut":  statut,
     }
     _orders_cache[order_id] = entry
     try:
-        try:
-            with open(ORDERS_FILE, "r") as f:
-                orders = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            orders = {}
-        orders.update(_orders_cache)   # merge cache → fichier
-        with open(ORDERS_FILE, "w") as f:
-            json.dump(orders, f, ensure_ascii=False, indent=2)
+        orders = _read_json(ORDERS_FILE, {})
+        orders.update(_orders_cache)
+        _write_json(ORDERS_FILE, orders)
     except Exception as e:
         logger.error(f"Erreur sauvegarde commande : {e}")
 
 def mettre_a_jour_statut(order_id: str, statut: str) -> None:
-    """Met à jour le statut d'une commande (cache + disque)."""
+    """Met à jour le statut (cache + disque atomique)."""
     if order_id in _orders_cache:
         _orders_cache[order_id]["statut"] = statut
     try:
-        with open(ORDERS_FILE, "r") as f:
-            orders = json.load(f)
+        orders = _read_json(ORDERS_FILE, {})
         if order_id in orders:
             orders[order_id]["statut"] = statut
-        with open(ORDERS_FILE, "w") as f:
-            json.dump(orders, f, ensure_ascii=False, indent=2)
+        _write_json(ORDERS_FILE, orders)
     except Exception as e:
         logger.error(f"Erreur mise à jour statut : {e}")
 
@@ -175,58 +197,41 @@ def charger_commande(order_id: str):
     """Charge une commande : cache mémoire en priorité, puis disque."""
     if order_id in _orders_cache:
         return _orders_cache[order_id]
-    try:
-        with open(ORDERS_FILE, "r") as f:
-            orders = json.load(f)
-        entry = orders.get(order_id)
-        if entry:
-            _orders_cache[order_id] = entry   # re-hydrate le cache
-        return entry
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
+    orders = _read_json(ORDERS_FILE, {})
+    entry = orders.get(order_id)
+    if entry:
+        _orders_cache[order_id] = entry
+    return entry
 
 def log_message(user_id: int, name: str, username: str,
                 text: str, direction: str = "client") -> None:
-    """Enregistre un message dans messages.json pour le dashboard."""
+    """Enregistre un message dans messages.json (atomique)."""
     try:
-        try:
-            with open(MESSAGES_FILE, "r") as f:
-                msgs = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            msgs = {}
-
+        msgs = _read_json(MESSAGES_FILE, {})
         uid = str(user_id)
         if uid not in msgs:
             msgs[uid] = {"name": name, "username": username, "messages": [], "unread": 0}
         msgs[uid]["name"]     = name
         msgs[uid]["username"] = username
         msgs[uid]["messages"].append({
-            "text": text,
-            "ts":   now_ts(),
+            "text":  text,
+            "ts":    now_ts(),
             "heure": now_str(),
-            "from": direction,   # "client" ou "admin"
-            "read": direction == "admin",
+            "from":  direction,
+            "read":  direction == "admin",
         })
         if direction == "client":
             msgs[uid]["unread"] = msgs[uid].get("unread", 0) + 1
-
-        # Garde les 100 derniers messages par user
         msgs[uid]["messages"] = msgs[uid]["messages"][-100:]
-
-        with open(MESSAGES_FILE, "w") as f:
-            json.dump(msgs, f, ensure_ascii=False, indent=2)
+        _write_json(MESSAGES_FILE, msgs)
     except Exception as e:
         logger.error(f"log_message: {e}")
 
-
 def _precharger_cache() -> None:
     """Charge orders.json en mémoire au démarrage."""
-    try:
-        with open(ORDERS_FILE, "r") as f:
-            _orders_cache.update(json.load(f))
-        logger.info(f"Cache orders chargé : {len(_orders_cache)} commandes")
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    data = _read_json(ORDERS_FILE, {})
+    _orders_cache.update(data)
+    logger.info(f"Cache orders chargé : {len(_orders_cache)} commandes")
 
 # ──────────────────────────────────────────────────────────
 #  ÉTAPE 1 — ACCUEIL
@@ -627,6 +632,13 @@ async def envoyer_suivi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     order_id    = args[0].upper()
     lien_suivi  = args[1]
+
+    # Validation format CMD-XXXXX
+    if not ORDER_ID_RE.match(order_id):
+        await update.message.reply_text(
+            "❌ Format invalide. Exemple : `CMD-AB12C`", parse_mode="Markdown"
+        )
+        return
 
     # Chargement de la commande
     commande = charger_commande(order_id)

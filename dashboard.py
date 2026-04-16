@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GrabDiscount — QG Admin v3"""
 from __future__ import annotations
-import os, json, re, subprocess, threading, datetime, functools, requests
+import os, json, re, subprocess, threading, datetime, functools, requests, fcntl
 from pathlib import Path
 
 try:
@@ -13,7 +13,12 @@ except ImportError:
 from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("DASHBOARD_SECRET", "grabsecret2024")
+# Secret Flask : obligatoire depuis .env, jamais hardcodé
+_secret = os.environ.get("DASHBOARD_SECRET")
+if not _secret:
+    import secrets as _s
+    _secret = _s.token_urlsafe(32)   # généré aléatoirement si absent → sessions sécurisées
+app.secret_key = _secret
 
 BASE        = Path(__file__).parent
 ORDERS_F    = BASE / "orders.json"
@@ -22,21 +27,40 @@ ACCOUNTS_F  = BASE / "accounts.json"
 EXPORT_F    = BASE / "icloud_gen" / "emails_export.txt"
 STATUS_F    = BASE / "status.json"
 
-BOT_TOKEN   = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID    = int(os.environ.get("ADMIN_CHAT_ID", 0))
-DASHBOARD_PWD = os.environ.get("DASHBOARD_PASSWORD", "grabadmin2024")
+BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
+ADMIN_ID      = int(os.environ.get("ADMIN_CHAT_ID", 0))
+DASHBOARD_PWD = os.environ.get("DASHBOARD_PASSWORD")
+if not DASHBOARD_PWD:
+    raise RuntimeError("DASHBOARD_PASSWORD non défini dans .env — démarrage refusé.")
+
+# ── Verrou I/O pour éviter les race conditions ─────────────
+_io_lock = threading.Lock()
 
 _gen_status = {"running": False, "log": "", "last_run": None}
 
 # ── HELPERS ───────────────────────────────────────────────
 def rj(p, default=None):
+    """Lecture JSON avec verrou partagé."""
     try:
-        return json.loads(Path(p).read_text())
+        with open(p, "r", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_SH)
+            data = json.load(f)
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return data
     except Exception:
         return default if default is not None else {}
 
 def wj(p, data):
-    Path(p).write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    """Écriture atomique JSON : tmp → rename, avec verrou exclusif."""
+    tmp = str(p) + ".tmp"
+    with _io_lock:
+        with open(tmp, "w", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+            fcntl.flock(f, fcntl.LOCK_UN)
+        os.replace(tmp, str(p))
 
 def tg(chat_id, text):
     if not BOT_TOKEN: return False
@@ -831,14 +855,14 @@ function renderOrders(){
   const entries=filteredOrders();
   if(!entries.length){tbody.innerHTML=`<tr><td colspan="7"><div class="empty"><div class="empty-icon">📭</div>Aucune commande</div></td></tr>`;return;}
   tbody.innerHTML=entries.map(([ref,o])=>`
-    <tr onclick="openSlide('${ref}')">
-      <td class="mono" style="color:var(--green)">${ref}</td>
-      <td>${o.nom||'—'}</td>
-      <td>${o.cuisine||'—'}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.adresse||'—'}</td>
+    <tr onclick="openSlide('${escHtml(ref)}')">
+      <td class="mono" style="color:var(--green)">${escHtml(ref)}</td>
+      <td>${escHtml(o.nom||'—')}</td>
+      <td>${escHtml(o.cuisine||'—')}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(o.adresse||'—')}</td>
       <td style="font-weight:700;color:var(--green)">${o.prix||0}฿</td>
       <td>${sf(o.statut)}</td>
-      <td style="color:var(--t3);font-size:.78rem">${o.heure||'—'}</td>
+      <td style="color:var(--t3);font-size:.78rem">${escHtml(o.heure||'—')}</td>
     </tr>`).join('');
 }
 
@@ -848,13 +872,13 @@ function renderRecentOrders(){
   const entries=Object.entries(_orders).reverse().slice(0,5);
   if(!entries.length){tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:24px">Aucune commande</td></tr>`;return;}
   tbody.innerHTML=entries.map(([ref,o])=>`
-    <tr onclick="nav('orders');setTimeout(()=>openSlide('${ref}'),100)" style="cursor:pointer">
-      <td class="mono" style="color:var(--green)">${ref}</td>
-      <td>${o.nom||'—'}</td>
-      <td>${o.cuisine||'—'}</td>
+    <tr onclick="nav('orders');setTimeout(()=>openSlide('${escHtml(ref)}'),100)" style="cursor:pointer">
+      <td class="mono" style="color:var(--green)">${escHtml(ref)}</td>
+      <td>${escHtml(o.nom||'—')}</td>
+      <td>${escHtml(o.cuisine||'—')}</td>
       <td style="font-weight:700;color:var(--green)">${o.prix||0}฿</td>
       <td>${sf(o.statut)}</td>
-      <td style="color:var(--t3);font-size:.78rem">${o.heure||'—'}</td>
+      <td style="color:var(--t3);font-size:.78rem">${escHtml(o.heure||'—')}</td>
     </tr>`).join('');
 }
 
@@ -865,30 +889,32 @@ function openSlide(ref){
   document.getElementById('sp-time').textContent=o.heure||'';
   document.getElementById('sp-status-pill').innerHTML=sf(o.statut);
   const statusOpts=Object.entries(STATUT).map(([k,v])=>`<option value="${k}"${o.statut===k?' selected':''}>${v.label}</option>`).join('');
+  const safeRef = escHtml(ref);
+  const safeLien = o.lien_commande ? escHtml(o.lien_commande) : '';
   document.getElementById('slideBody').innerHTML=`
     <div class="slide-section"><h4>👤 Client</h4>
-      <div class="detail-row"><span class="detail-key">Nom</span><span class="detail-val">${o.nom||'—'}</span></div>
-      <div class="detail-row"><span class="detail-key">Telegram ID</span><span class="detail-val mono">${o.chat_id||'—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Nom</span><span class="detail-val">${escHtml(o.nom||'—')}</span></div>
+      <div class="detail-row"><span class="detail-key">Telegram ID</span><span class="detail-val mono">${escHtml(String(o.chat_id||'—'))}</span></div>
     </div>
     <div class="slide-section"><h4>📦 Commande</h4>
-      <div class="detail-row"><span class="detail-key">Cuisine</span><span class="detail-val">${o.cuisine||'—'}</span></div>
-      <div class="detail-row"><span class="detail-key">Adresse</span><span class="detail-val">${o.adresse||'—'}</span></div>
-      ${o.lien_commande?`<div class="detail-row"><span class="detail-key">Lien</span><a href="${o.lien_commande}" target="_blank" style="color:var(--blue);font-size:.82rem">Ouvrir ↗</a></div>`:''}
+      <div class="detail-row"><span class="detail-key">Cuisine</span><span class="detail-val">${escHtml(o.cuisine||'—')}</span></div>
+      <div class="detail-row"><span class="detail-key">Adresse</span><span class="detail-val">${escHtml(o.adresse||'—')}</span></div>
+      ${safeLien?`<div class="detail-row"><span class="detail-key">Lien</span><a href="${safeLien}" target="_blank" rel="noopener noreferrer" style="color:var(--blue);font-size:.82rem">Ouvrir ↗</a></div>`:''}
       <div class="detail-row"><span class="detail-key">Panier Grab</span><span class="detail-val">${o.budget||0}฿</span></div>
       <div class="detail-row"><span class="detail-key">Payé</span><span class="detail-val c-green">${o.prix||0}฿</span></div>
       <div class="detail-row"><span class="detail-key">Marge</span><span class="detail-val c-blue">${Math.round((o.prix||0)/2)}฿</span></div>
     </div>
     <div class="slide-section"><h4>⚡ Statut</h4>
       <select class="select" id="sp-sel" style="width:100%;margin-bottom:10px">${statusOpts}</select>
-      <button class="btn btn-secondary btn-sm" style="width:100%" onclick="updateStatus('${ref}')">Mettre à jour</button>
+      <button class="btn btn-secondary btn-sm" style="width:100%" onclick="updateStatus('${safeRef}')">Mettre à jour</button>
     </div>
     <div class="slide-section"><h4>📍 Envoyer le suivi</h4>
       <input class="input" id="sp-track" style="width:100%;margin-bottom:10px" placeholder="https://order.grab.com/tracking/…">
-      <button class="btn btn-primary btn-sm" style="width:100%" onclick="sendTracking('${ref}')">🛵 Envoyer au client</button>
+      <button class="btn btn-primary btn-sm" style="width:100%" onclick="sendTracking('${safeRef}')">🛵 Envoyer au client</button>
     </div>
     <div class="slide-section"><h4>💬 Contacter</h4>
       <textarea class="input" id="sp-msg" style="width:100%;height:80px;resize:none;margin-bottom:10px" placeholder="Votre message…"></textarea>
-      <button class="btn btn-blue btn-sm" style="width:100%" onclick="quickReply(${o.chat_id||0})">Envoyer le message</button>
+      <button class="btn btn-blue btn-sm" style="width:100%" onclick="quickReply(${parseInt(o.chat_id)||0})">Envoyer le message</button>
     </div>`;
   document.getElementById('slideOverlay').classList.add('open');
   document.getElementById('slidePanel').classList.add('open');
@@ -959,22 +985,23 @@ function selectChat(uid){
 function renderChat(uid){
   const c=_msgs[uid]; if(!c)return;
   const win=document.getElementById('chatWindow'); if(!win)return;
-  const init=(c.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  const init=escHtml((c.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase());
+  const safeUid=escHtml(uid);
   const msgs=(c.messages||[]).map(m=>`
     <div style="display:flex;flex-direction:column;align-items:${m.from==='admin'?'flex-end':'flex-start'}">
-      <div class="msg-bubble msg-${m.from}">${escHtml(m.text||'')}</div>
-      <div class="msg-time">${m.heure||''}</div>
+      <div class="msg-bubble msg-${m.from==='admin'?'admin':'client'}">${escHtml(m.text||'')}</div>
+      <div class="msg-time">${escHtml(m.heure||'')}</div>
     </div>`).join('');
   win.innerHTML=`
     <div class="chat-header">
       <div class="avatar" style="background:#3b82f620;color:#3b82f6;width:36px;height:36px;font-size:.85rem">${init}</div>
-      <div><div style="font-weight:700">${c.name||uid}</div><div style="font-size:.75rem;color:var(--t3)">${c.username||''} · ID : ${uid}</div></div>
+      <div><div style="font-weight:700">${escHtml(c.name||uid)}</div><div style="font-size:.75rem;color:var(--t3)">${escHtml(c.username||'')} · ID : ${safeUid}</div></div>
     </div>
     <div class="chat-msgs" id="chatMsgs">${msgs||'<div style="color:var(--t3);margin:auto">Aucun message</div>'}</div>
     <div class="chat-input-row">
       <textarea class="chat-textarea" id="chatInput" rows="2" placeholder="Votre réponse… (Ctrl+Enter pour envoyer)"
-        onkeydown="if(event.ctrlKey&&event.key==='Enter')sendReply('${uid}')"></textarea>
-      <button class="send-btn" onclick="sendReply('${uid}')">➤</button>
+        onkeydown="if(event.ctrlKey&&event.key==='Enter')sendReply('${safeUid}')"></textarea>
+      <button class="send-btn" onclick="sendReply('${safeUid}')">➤</button>
     </div>`;
   setTimeout(()=>{const el=document.getElementById('chatMsgs');if(el)el.scrollTop=el.scrollHeight;},50);
 }
@@ -1012,14 +1039,17 @@ async function loadAccounts(){
   if(!_accounts.length){tbody.innerHTML=`<tr><td colspan="5"><div class="empty"><div class="empty-icon">📭</div>Aucun email — cliquez sur "Générer"</div></td></tr>`;return;}
   tbody.innerHTML=_accounts.map(a=>{
     const used=a.status==='used';
+    const safeEmail=escHtml(a.email||'');
+    const safePhone=escHtml(a.grab_phone||'—');
+    const safeDate=escHtml((a.created||'').slice(0,10));
     return `<tr>
-      <td class="mono" style="color:var(--purple)">${a.email}</td>
-      <td style="color:var(--t3);font-size:.78rem">${(a.created||'').slice(0,10)}</td>
+      <td class="mono" style="color:var(--purple)">${safeEmail}</td>
+      <td style="color:var(--t3);font-size:.78rem">${safeDate}</td>
       <td>${used?'<span class="pill pill-orange">🔗 Utilisé</span>':'<span class="pill pill-green">✅ Disponible</span>'}</td>
-      <td><span style="font-size:.8rem;color:var(--t2)">${a.grab_phone||'—'}</span></td>
+      <td><span style="font-size:.8rem;color:var(--t2)">${safePhone}</span></td>
       <td style="display:flex;gap:6px">
-        <button class="btn btn-secondary btn-sm" onclick="copyEmail('${a.email}')">Copier</button>
-        <button class="btn ${used?'btn-secondary':'btn-blue'} btn-sm" onclick="toggleAccountStatus('${a.email}','${used?'available':'used'}')">${used?'Libérer':'Marquer utilisé'}</button>
+        <button class="btn btn-secondary btn-sm" onclick="copyEmail('${safeEmail}')">Copier</button>
+        <button class="btn ${used?'btn-secondary':'btn-blue'} btn-sm" onclick="toggleAccountStatus('${safeEmail}','${used?'available':'used'}')">${used?'Libérer':'Marquer utilisé'}</button>
       </td>
     </tr>`;
   }).join('');
@@ -1039,7 +1069,7 @@ function openGenModal(){document.getElementById('genModal').classList.add('open'
 function closeGenModal(){document.getElementById('genModal').classList.remove('open');if(_genPoll){clearInterval(_genPoll);_genPoll=null;}}
 async function startGen(){
   $('genStartBtn').disabled=true;
-  $('genLog').textContent='Lancement…\n';
+  $('genLog').textContent='Lancement…';
   const r=await fetch('/api/generate/start',{method:'POST'});
   const d=await r.json();
   if(!d.ok){toast(d.msg||'Erreur',false);$('genStartBtn').disabled=false;return;}
@@ -1066,7 +1096,7 @@ function renderRecentActivity(){
   if(!events.length){el.innerHTML='<div style="color:var(--t3);font-size:.85rem;text-align:center;padding:20px">Aucune activité récente</div>';return;}
   el.innerHTML=events.slice(0,6).map(e=>`
     <div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--s3)40">
-      <span style="font-size:1rem">${e.icon}</span>
+      <span style="font-size:1rem">${escHtml(e.icon)}</span>
       <div style="font-size:.8rem;color:var(--t2);flex:1">${escHtml(e.text)}</div>
     </div>`).join('');
 }
