@@ -1,6 +1,6 @@
 services:
-  - type: worker
-    name: grabdiscount-bot
+  - type: web                          # ← web (pas worker) = URL publique
+    name: grabdiscount-dashboard
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python start.py
@@ -9,6 +9,20 @@ services:
         value: 8796586342:AAG4HxelgPzuDVLCfZMzcYHRDGRH_C4tig4
       - key: ADMIN_CHAT_ID
         value: "8711205448"
+      - key: CHANNEL_ID
+        value: "-1003910907077"
+      - key: DASHBOARD_PASSWORD
+        value: grabadmin2024
+      - key: DASHBOARD_SECRET
+        value: fvmmXXXcieNckT22HUpYUDWLrYk18FYWCCN5aVdMzsQ
+      - key: DASHBOARD_PORT
+        value: "10000"
+      - key: SMSPOOL_KEY
+        value: kK3UHswUUanyRyz1K1zqaLHF2l78ut46
+      - key: HEROSMS_KEY
+        value: 05ef0b6f9230A0e7951514952f60e553
+      - key: DATA_DIR
+        value: /data
     disk:
       name: data
       mountPath: /data

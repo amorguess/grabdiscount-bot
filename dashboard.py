@@ -20,12 +20,20 @@ if not _secret:
     _secret = _s.token_urlsafe(32)   # généré aléatoirement si absent → sessions sécurisées
 app.secret_key = _secret
 
-BASE        = Path(__file__).parent
+_CODE_DIR   = Path(__file__).parent                             # dossier du code
+BASE        = Path(os.environ.get("DATA_DIR", str(_CODE_DIR)))  # données → DATA_DIR si dispo
 ORDERS_F    = BASE / "orders.json"
 MESSAGES_F  = BASE / "messages.json"
 ACCOUNTS_F  = BASE / "accounts.json"
-EXPORT_F    = BASE / "icloud_gen" / "emails_export.txt"
+EXPORT_F    = _CODE_DIR / "icloud_gen" / "emails_export.txt"    # emails générés = code
+EMAILS_F    = _CODE_DIR / "icloud_gen" / "emails.txt"
 STATUS_F    = BASE / "status.json"
+
+HEROSMS_KEY = os.environ.get("HEROSMS_KEY", "")
+
+# sessions d'achat SMS en cours : order_id → {phone, status, sms, email, ...}
+_sms_sessions: dict = {}
+_sms_lock = threading.Lock()
 
 BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID      = int(os.environ.get("ADMIN_CHAT_ID", 0))
@@ -37,6 +45,20 @@ if not DASHBOARD_PWD:
 _io_lock = threading.Lock()
 
 _gen_status = {"running": False, "log": "", "last_run": None}
+
+# ── Auto-génération toutes les 65 min ─────────────────────
+_auto_gen = {
+    "enabled":    True,        # activé par défaut au démarrage
+    "interval":   65,          # minutes entre chaque run
+    "count":      5,           # emails par run
+    "total":      0,           # total généré depuis le démarrage
+    "next_run":   None,        # ISO string prochain lancement
+    "last_run":   None,
+    "last_count": 0,
+    "log":        [],          # historique des runs (max 20)
+}
+_auto_timer: threading.Timer | None = None
+_auto_lock  = threading.Lock()
 
 # ── HELPERS ───────────────────────────────────────────────
 def rj(p, default=None):
@@ -128,6 +150,68 @@ def auth(f):
         return f(*a, **kw)
     return wrap
 
+# ─────────────────────────────────────────────────────────────
+#  AUTO-GÉNÉRATION iCloud HME (toutes les 65 min)
+# ─────────────────────────────────────────────────────────────
+
+def _run_auto_gen():
+    """Lance une génération silencieuse puis replanifie si toujours activée."""
+    global _auto_timer
+    with _auto_lock:
+        if not _auto_gen["enabled"]:
+            return
+        if _gen_status["running"]:
+            # Déjà en cours — on replanifie sans générer
+            _schedule_next()
+            return
+
+    _gen_status["running"] = True
+    ts = datetime.datetime.now()
+    count = _auto_gen["count"]
+    log_entry = {"ts": ts.strftime("%H:%M"), "count": 0, "ok": False}
+
+    try:
+        import subprocess as _sp
+        proc = _sp.run(
+            ["python3", str(BASE / "icloud_gen" / "run.py"), "generate", str(count)],
+            capture_output=True, text=True, cwd=str(BASE), timeout=120
+        )
+        out = proc.stdout + proc.stderr
+        # Compte les emails réellement générés
+        generated = len([l for l in out.splitlines() if l.strip().startswith("✅") and "@icloud.com" in l])
+        log_entry["count"] = generated
+        log_entry["ok"]    = generated > 0
+        with _auto_lock:
+            _auto_gen["total"]      += generated
+            _auto_gen["last_run"]    = ts.isoformat()
+            _auto_gen["last_count"]  = generated
+            _auto_gen["log"].insert(0, log_entry)
+            _auto_gen["log"]         = _auto_gen["log"][:20]   # garde 20 entrées
+        if generated:
+            _reload_accounts()
+    except Exception as e:
+        log_entry["error"] = str(e)
+        with _auto_lock:
+            _auto_gen["log"].insert(0, log_entry)
+    finally:
+        _gen_status["running"] = False
+
+    with _auto_lock:
+        if _auto_gen["enabled"]:
+            _schedule_next()
+
+def _schedule_next():
+    """Planifie le prochain run dans interval minutes."""
+    global _auto_timer
+    if _auto_timer:
+        _auto_timer.cancel()
+    interval_s = _auto_gen["interval"] * 60
+    next_dt    = datetime.datetime.now() + datetime.timedelta(seconds=interval_s)
+    _auto_gen["next_run"] = next_dt.isoformat()
+    _auto_timer = threading.Timer(interval_s, _run_auto_gen)
+    _auto_timer.daemon = True
+    _auto_timer.start()
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     err = ""
@@ -155,11 +239,13 @@ def api_dispo():
 @app.route("/api/bot/health")
 @auth
 def api_bot_health():
-    """Proxy la vérification de santé du bot (port 10000)."""
-    bot_port = int(os.environ.get("PORT", 10000))
+    """Vérifie si bot.py tourne comme process local."""
+    import subprocess as _sp
     try:
-        r = requests.get(f"http://localhost:{bot_port}/health", timeout=3)
-        return jsonify({"alive": r.status_code == 200, "msg": r.text})
+        r = _sp.run(["pgrep", "-f", "bot.py"], capture_output=True, text=True)
+        pids = [p.strip() for p in r.stdout.strip().splitlines() if p.strip()]
+        alive = len(pids) > 0
+        return jsonify({"alive": alive, "msg": f"PIDs: {', '.join(pids)}" if alive else "Aucun process bot.py trouvé"})
     except Exception as e:
         return jsonify({"alive": False, "msg": str(e)})
 
@@ -191,6 +277,77 @@ def api_messages(): return jsonify(rj(MESSAGES_F, {}))
 def api_accounts():
     return jsonify({"accounts": rj(ACCOUNTS_F, []), "quota": icloud_quota()})
 
+@app.route("/api/packs")
+@auth
+def api_packs():
+    """
+    Retourne la liste des packs identité :
+    1 pack = 1 email iCloud + 1 identité française + 1 adresse Bangkok + SMS attribué.
+    Les identités sont générées de façon déterministe (seed = email).
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(BASE))
+    try:
+        from identity_gen import generate_identity, get_bangkok_address
+    except ImportError:
+        return jsonify({"ok": False, "msg": "identity_gen non installé", "packs": []})
+
+    accounts = rj(ACCOUNTS_F, [])
+    packs = []
+    for a in accounts:
+        email = a.get("email", "")
+        if not email:
+            continue
+        # Identité déterministe (même résultat à chaque appel)
+        try:
+            ident   = generate_identity(seed=email)
+            addr    = get_bangkok_address(seed=email)
+        except Exception:
+            ident = {"prenom": "?", "nom": "?", "full_name": "?"}
+            addr  = "?"
+
+        packs.append({
+            "email":        email,
+            "status":       a.get("status", "available"),
+            "prenom":       a.get("grab_prenom") or ident.get("prenom", ""),
+            "nom":          a.get("grab_nom")    or ident.get("nom", ""),
+            "full_name":    a.get("grab_name")   or ident.get("full_name", ""),
+            "bangkok_addr": a.get("grab_bangkok_addr") or addr,
+            "phone":        a.get("grab_phone", ""),
+            "password":     a.get("grab_password", ""),
+            "created_at":   a.get("created", ""),
+            "grab_created": a.get("grab_created", ""),
+            "_locked":      a.get("_locked", False),
+            "_fail_count":  a.get("_fail_count", 0),
+            "_last_error":  a.get("_last_error", ""),
+        })
+
+    # Tri : grab_ready en premier, puis available, puis failed
+    order = {"grab_ready": 0, "available": 1, "failed": 3}
+    packs.sort(key=lambda p: order.get(p["status"], 2))
+    return jsonify({"ok": True, "packs": packs, "total": len(packs)})
+
+
+@app.route("/api/smspool/balance")
+@auth
+def api_smspool_balance():
+    """Retourne le solde SMSPool en temps réel."""
+    key = os.environ.get("SMSPOOL_KEY", "")
+    if not key:
+        return jsonify({"ok": False, "balance": 0, "msg": "SMSPOOL_KEY non configuré"})
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(BASE))
+        from sms_gen.smspool import SMSPool
+        client = SMSPool(key)
+        bal = client.balance()
+        # Nombre de comptes possibles (prix moyen $0.15)
+        comptes = int(bal / 0.15)
+        return jsonify({"ok": True, "balance": bal, "comptes_possibles": comptes})
+    except Exception as e:
+        return jsonify({"ok": False, "balance": 0, "msg": str(e)})
+
+
 @app.route("/api/accounts/update", methods=["POST"])
 @auth
 def api_accounts_update():
@@ -208,6 +365,124 @@ def api_accounts_update():
     wj(ACCOUNTS_F, accounts)
     return jsonify({"ok": True})
 
+@app.route("/api/packs/prebuy", methods=["POST"])
+@auth
+def api_packs_prebuy():
+    """
+    Achète un numéro SMSPool pour chaque pack sans numéro assigné.
+    Retourne la liste des achats effectués.
+    """
+    import datetime as _dt
+    from sms_gen.smspool import SMSPool, SMSPoolError
+    key = os.environ.get("SMSPOOL_KEY", "")
+    if not key:
+        return jsonify({"ok": False, "msg": "SMSPOOL_KEY manquant"})
+
+    sms = SMSPool(key)
+    accounts = rj(ACCOUNTS_F, [])
+    bought = []
+    errors = []
+
+    for a in accounts:
+        # Sauter si déjà un numéro valide assigné
+        if a.get("grab_phone") and a.get("smspool_order_id"):
+            continue
+        if a.get("status") not in ("available", None, ""):
+            continue
+
+        try:
+            order = sms.buy_for_grab("thailand")
+            a["grab_phone"]       = order["phone"]
+            a["smspool_order_id"] = order["id"]
+            a["phone_bought_at"]  = _dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            bought.append({"email": a["email"], "phone": order["phone"], "order_id": order["id"]})
+        except SMSPoolError as e:
+            errors.append({"email": a["email"], "error": str(e)})
+            break  # stop on error (balance ou limite)
+
+    wj(ACCOUNTS_F, accounts)
+    return jsonify({
+        "ok": True,
+        "bought": len(bought),
+        "errors": len(errors),
+        "details": bought,
+        "error_details": errors
+    })
+
+@app.route("/api/packs/clear_phones", methods=["POST"])
+@auth
+def api_packs_clear_phones():
+    """Libère les numéros pré-achetés (ex: expirés)."""
+    accounts = rj(ACCOUNTS_F, [])
+    cleared = 0
+    for a in accounts:
+        if a.get("smspool_order_id") and a.get("status") == "available":
+            a["grab_phone"]       = ""
+            a["smspool_order_id"] = ""
+            a["phone_bought_at"]  = ""
+            cleared += 1
+    wj(ACCOUNTS_F, accounts)
+    return jsonify({"ok": True, "cleared": cleared})
+
+@app.route("/api/packs/mark_created", methods=["POST"])
+@auth
+def api_packs_mark_created():
+    """Marque un pack comme créé manuellement avec le numéro fourni."""
+    d = request.json or {}
+    email = (d.get("email") or "").strip()
+    phone = (d.get("phone") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "msg": "email requis"})
+
+    import sys as _sys
+    _sys.path.insert(0, str(BASE))
+    try:
+        from identity_gen import generate_identity, get_bangkok_address
+        ident = generate_identity(seed=email)
+        addr  = get_bangkok_address(seed=email)
+    except Exception:
+        ident = {"full_name": "?", "prenom": "?", "nom": "?"}
+        addr  = ""
+
+    accounts = rj(ACCOUNTS_F, [])
+    found = False
+    for a in accounts:
+        if a["email"] == email:
+            a["status"]            = "grab_ready"
+            a["grab_phone"]        = phone
+            a["grab_created"]      = datetime.datetime.now().isoformat()
+            a["grab_password"]     = "114722165uLCL"
+            a["grab_name"]         = ident.get("full_name", "")
+            a["grab_prenom"]       = ident.get("prenom", "")
+            a["grab_nom"]          = ident.get("nom", "")
+            a["grab_bangkok_addr"] = addr
+            a.pop("_locked", None)
+            a["_fail_count"]       = 0
+            a.pop("_last_error", None)
+            found = True
+            break
+    if not found:
+        return jsonify({"ok": False, "msg": "email non trouvé"})
+    wj(ACCOUNTS_F, accounts)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/packs/reset_failed", methods=["POST"])
+@auth
+def api_packs_reset_failed():
+    """Remet tous les comptes failed en available."""
+    accounts = rj(ACCOUNTS_F, [])
+    reset = 0
+    for a in accounts:
+        if a.get("status") == "failed":
+            a["status"]      = "available"
+            a["_fail_count"] = 0
+            a.pop("_last_error", None)
+            reset += 1
+    wj(ACCOUNTS_F, accounts)
+    return jsonify({"ok": True, "reset": reset})
+
+
 @app.route("/api/generate/status")
 @auth
 def api_gen_status():
@@ -222,12 +497,15 @@ def api_gen_start():
     if quota["remaining"] == 0:
         return jsonify({"ok": False, "msg": f"Quota atteint — reset dans {quota['reset']}"})
 
+    count = request.get_json(silent=True) or {}
+    n_emails = max(1, min(int(count.get("count", 5)), 25))
+
     def _run():
         _gen_status["running"] = True
-        _gen_status["log"] = "Lancement du générateur iCloud…\n"
+        _gen_status["log"] = f"Lancement du générateur iCloud… ({n_emails} emails)\n"
         try:
             proc = subprocess.Popen(
-                ["python3", str(BASE / "icloud_gen" / "run.py"), "generate"],
+                ["python3", str(BASE / "icloud_gen" / "run.py"), "generate", str(n_emails)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, cwd=str(BASE)
             )
@@ -247,21 +525,639 @@ def api_gen_start():
     return jsonify({"ok": True})
 
 def _reload_accounts():
-    """Met à jour accounts.json depuis emails_export.txt après génération."""
+    """Importe tous les nouveaux emails dans accounts.json.
+    Lit emails.txt (généré par cmd_generate) ET emails_export.txt (cmd_list).
+    """
     existing = {a["email"]: a for a in rj(ACCOUNTS_F, [])}
+    now_ts = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    added = 0
+
+    # ── 1. emails.txt — format simple, une adresse par ligne ──
     try:
-        for line in EXPORT_F.read_text().splitlines():
+        for line in EMAILS_F.read_text(encoding="utf-8").splitlines():
             line = line.strip()
+            if not line or line.startswith("#"): continue
+            email = line.split()[0]
+            if "@icloud.com" not in email: continue
+            if email not in existing:
+                existing[email] = {
+                    "email": email, "created": now_ts,
+                    "status": "available", "grab_phone": "",
+                    "grab_notes": "", "used_at": None,
+                }
+                added += 1
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        _gen_status["log"] += f"\n⚠ reload emails.txt: {e}"
+
+    # ── 2. emails_export.txt — format avec date, généré par cmd_list ──
+    try:
+        for line in EXPORT_F.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"): continue
             if "@icloud.com" not in line: continue
-            parts = line.split("  ")
-            email = parts[0].strip()
+            email = line.split()[0]
             if email not in existing:
                 m = re.search(r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2})", line)
-                ts = datetime.datetime.strptime(m.group(1), "%d/%m/%Y %H:%M").strftime("%Y-%m-%dT%H:%M:%S") if m else datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                existing[email] = {"email": email, "created": ts, "status": "available", "grab_phone": "", "grab_notes": "", "used_at": None}
-        wj(ACCOUNTS_F, list(existing.values()))
+                ts = datetime.datetime.strptime(m.group(1), "%d/%m/%Y %H:%M").strftime("%Y-%m-%dT%H:%M:%S") if m else now_ts
+                existing[email] = {
+                    "email": email, "created": ts,
+                    "status": "available", "grab_phone": "",
+                    "grab_notes": "", "used_at": None,
+                }
+                added += 1
+    except FileNotFoundError:
+        pass
     except Exception as e:
-        _gen_status["log"] += f"\n⚠ reload: {e}"
+        _gen_status["log"] += f"\n⚠ reload emails_export.txt: {e}"
+
+    wj(ACCOUNTS_F, list(existing.values()))
+    if added:
+        _gen_status["log"] += f"\n✅ {added} nouveau(x) email(s) ajouté(s) au dashboard"
+
+# ─────────────────────────────────────────────────────────────
+#  AUTO-GEN API
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/api/autogen/status")
+@auth
+def api_autogen_status():
+    with _auto_lock:
+        s = dict(_auto_gen)
+    return jsonify(s)
+
+@app.route("/api/autogen/toggle", methods=["POST"])
+@auth
+def api_autogen_toggle():
+    global _auto_timer
+    d = request.get_json(silent=True) or {}
+    enable = d.get("enabled", not _auto_gen["enabled"])
+    with _auto_lock:
+        _auto_gen["enabled"] = bool(enable)
+        if "interval" in d:
+            _auto_gen["interval"] = max(10, int(d["interval"]))
+        if "count" in d:
+            _auto_gen["count"] = max(1, min(int(d["count"]), 5))
+    if enable:
+        _schedule_next()
+    else:
+        if _auto_timer:
+            _auto_timer.cancel()
+            _auto_timer = None
+        with _auto_lock:
+            _auto_gen["next_run"] = None
+    return jsonify({"ok": True, "enabled": _auto_gen["enabled"], "next_run": _auto_gen.get("next_run")})
+
+@app.route("/api/autogen/runnow", methods=["POST"])
+@auth
+def api_autogen_runnow():
+    """Lance une génération immédiate sans attendre le timer."""
+    if _gen_status["running"]:
+        return jsonify({"ok": False, "msg": "Génération déjà en cours"})
+    threading.Thread(target=_run_auto_gen, daemon=True).start()
+    return jsonify({"ok": True})
+
+#  SMS — SMS-Activate
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/api/sms/balance")
+@auth
+def api_sms_balance():
+    if not HEROSMS_KEY:
+        return jsonify({"ok": False, "msg": "HEROSMS_KEY non configurée dans .env"})
+    try:
+        from sms_gen.herosms import HeroSMS
+        c = HeroSMS(HEROSMS_KEY)
+        return jsonify({"ok": True, "balance": c.balance()})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+@app.route("/api/sms/buy", methods=["POST"])
+@auth
+def api_sms_buy():
+    """Achète un numéro thaï sur SMS-Activate et surveille le SMS."""
+    if not HEROSMS_KEY:
+        return jsonify({"ok": False, "msg": "HEROSMS_KEY non configurée dans .env"})
+    data  = request.get_json(silent=True) or {}
+    email = data.get("email", "")
+    if not email:
+        return jsonify({"ok": False, "msg": "email requis"})
+
+    try:
+        from sms_gen.herosms import HeroSMS, HeroSMSError
+        client = HeroSMS(HEROSMS_KEY)
+        order  = client.buy_for_grab("thailand")
+
+        oid   = order["id"]
+        phone = order["phone"]
+
+        with _sms_lock:
+            _sms_sessions[str(oid)] = {
+                "order_id":   oid,
+                "phone":      phone,
+                "email":      email,
+                "status":     "PENDING",
+                "sms":        None,
+                "code":       None,
+                "started_at": datetime.datetime.now().isoformat(),
+                "service":    order.get("service", "gr"),
+            }
+
+        # Surveillance SMS en arrière-plan
+        def _watch():
+            import time as _time, re as _re
+            deadline = _time.time() + 120
+            while _time.time() < deadline:
+                try:
+                    result = client.check(oid)
+                    st     = result["status"]   # waiting | received | canceled
+                    with _sms_lock:
+                        sess = _sms_sessions.get(str(oid))
+                        if not sess: return
+                        sess["status"] = st.upper()
+                        if st == "received":
+                            sess["code"] = result["code"]
+                            sess["sms"]  = result["code"]
+                            sess["status"] = "RECEIVED"
+                    if st == "received":
+                        try: client.finish(oid)
+                        except: pass
+                        # Sauvegarde numéro dans accounts.json
+                        accounts = rj(ACCOUNTS_F, [])
+                        for acc in accounts:
+                            if acc.get("email") == email:
+                                acc["grab_phone"] = phone
+                                acc["status"] = "phone_assigned"
+                                break
+                        wj(ACCOUNTS_F, accounts)
+                        return
+                    if st == "canceled":
+                        return
+                    _time.sleep(5)
+                except Exception:
+                    _time.sleep(5)
+            try: client.cancel(oid)
+            except: pass
+            with _sms_lock:
+                sess = _sms_sessions.get(str(oid))
+                if sess: sess["status"] = "TIMEOUT"
+
+        threading.Thread(target=_watch, daemon=True).start()
+        return jsonify({"ok": True, "order_id": oid, "phone": phone})
+
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+@app.route("/api/sms/status/<order_id>")
+@auth
+def api_sms_status(order_id):
+    with _sms_lock:
+        sess = _sms_sessions.get(str(order_id))
+    if not sess:
+        return jsonify({"ok": False, "msg": "Session introuvable"})
+    return jsonify({"ok": True, **sess})
+
+@app.route("/api/sms/cancel/<order_id>", methods=["POST"])
+@auth
+def api_sms_cancel(order_id):
+    if not HEROSMS_KEY:
+        return jsonify({"ok": False})
+    try:
+        from sms_gen.herosms import HeroSMS
+        HeroSMS(HEROSMS_KEY).cancel(int(order_id))
+        with _sms_lock:
+            sess = _sms_sessions.get(str(order_id))
+            if sess: sess["status"] = "CANCELED"
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+@app.route("/api/sms/finish/<order_id>", methods=["POST"])
+@auth
+def api_sms_finish(order_id):
+    if not HEROSMS_KEY:
+        return jsonify({"ok": False})
+    try:
+        from sms_gen.herosms import HeroSMS
+        HeroSMS(HEROSMS_KEY).finish(int(order_id))
+        with _sms_lock:
+            _sms_sessions.pop(str(order_id), None)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+@app.route("/api/sms/retry/<order_id>", methods=["POST"])
+@auth
+def api_sms_retry(order_id):
+    """Redemande un SMS sur le même numéro."""
+    if not HEROSMS_KEY:
+        return jsonify({"ok": False})
+    try:
+        from sms_gen.herosms import HeroSMS
+        HeroSMS(HEROSMS_KEY).retry(int(order_id))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+# ─────────────────────────────────────────────────────────────
+#  GESTION COMMANDES CLIENTS — validation, annulation, timer
+# ─────────────────────────────────────────────────────────────
+
+HOURS_F = BASE / "hours.json"   # horaires d'ouverture
+_order_timers: dict = {}         # order_id → {"validated_at": ISO, "warned": bool}
+_order_timers_lock = threading.Lock()
+
+DEFAULT_HOURS = {"open": "10:00", "close": "22:00", "tz": "Asia/Bangkok", "enabled": True}
+
+def get_hours():
+    h = rj(HOURS_F, DEFAULT_HOURS)
+    if "open" not in h: h.update(DEFAULT_HOURS)
+    return h
+
+def is_open() -> bool:
+    """Vérifie si le service est dans les horaires."""
+    h = get_hours()
+    if not h.get("enabled", True): return True  # pas de restriction
+    import pytz
+    from datetime import time as dtime
+    try:
+        tz  = pytz.timezone(h.get("tz", "Asia/Bangkok"))
+        now = datetime.datetime.now(tz)
+        op  = dtime(*map(int, h["open"].split(":")))
+        cl  = dtime(*map(int, h["close"].split(":")))
+        return op <= now.time() <= cl
+    except: return True
+
+def tg_client(chat_id, text):
+    """Envoie un message Telegram à un client."""
+    return tg(chat_id, text)
+
+def _start_order_timer(order_id: str, chat_id: int):
+    """Lance le timer de sécurité pour une commande validée."""
+    import time as _t
+    def _watch():
+        validated_at = _t.time()
+        warned = False
+        while True:
+            _t.sleep(60)
+            elapsed = _t.time() - validated_at
+            orders = rj(ORDERS_F, {})
+            o = orders.get(order_id, {})
+            status = o.get("statut", "")
+            if status in ("livre", "annule", "en_cours_livraison"):
+                break
+            if elapsed > 15*60 and not warned:
+                tg_client(chat_id,
+                    "⏳ Légère attente sur votre commande, nous revenons vers vous dans quelques minutes.")
+                warned = True
+                with _order_timers_lock:
+                    if order_id in _order_timers:
+                        _order_timers[order_id]["warned"] = True
+            if elapsed > 30*60:
+                # Auto-annulation
+                orders = rj(ORDERS_F, {})
+                if orders.get(order_id, {}).get("statut") not in ("livre", "annule", "en_cours_livraison"):
+                    orders[order_id]["statut"] = "annule"
+                    orders[order_id]["annule_at"] = datetime.datetime.now().isoformat()
+                    wj(ORDERS_F, orders)
+                    tg_client(chat_id,
+                        "😔 Nous ne pouvons pas traiter votre commande pour le moment.\n"
+                        "Un remboursement vous sera effectué sous 24h. Désolé pour la gêne 🙏")
+                break
+    t = threading.Thread(target=_watch, daemon=True)
+    t.start()
+
+@app.route("/api/orders/<order_id>/validate", methods=["POST"])
+@auth
+def api_order_validate(order_id):
+    """
+    Admin valide une commande :
+    1. Assigne un compte Grab 'grab_ready' depuis le pool
+    2. Envoie message de confirmation au client
+    3. Lance le timer de sécurité (15min warn, 30min auto-cancel)
+    """
+    orders = rj(ORDERS_F, {})
+    o = orders.get(order_id)
+    if not o:
+        return jsonify({"ok": False, "msg": "Commande introuvable"})
+
+    # Assigner compte Grab depuis le pool
+    accounts = rj(ACCOUNTS_F, [])
+    grab_acc = None
+    for acc in accounts:
+        if acc.get("status") == "grab_ready":
+            grab_acc = acc
+            break
+    if not grab_acc:
+        # Fallback : prendre n'importe quel compte disponible
+        for acc in accounts:
+            if acc.get("status") in ("available", "phone_assigned"):
+                grab_acc = acc
+                break
+
+    now_iso = datetime.datetime.now().isoformat()
+
+    # Mettre à jour la commande
+    o["statut"]       = "en_cours"
+    o["validated_at"] = now_iso
+    o["grab_account"] = grab_acc["email"] if grab_acc else None
+    orders[order_id]  = o
+    wj(ORDERS_F, orders)
+
+    # Marquer le compte comme "in_use"
+    if grab_acc:
+        for acc in accounts:
+            if acc["email"] == grab_acc["email"]:
+                acc["status"]    = "in_use"
+                acc["in_use_at"] = now_iso
+                acc["order_id"]  = order_id
+                break
+        wj(ACCOUNTS_F, accounts)
+
+    # Message au client
+    chat_id  = o.get("chat_id") or o.get("user_id")
+    adresse  = o.get("adresse", "votre adresse")
+    if chat_id:
+        tg_client(int(chat_id),
+            f"✅ *Commande confirmée !*\n\n"
+            f"👨‍🍳 La cuisine a été prévenue, votre repas est en préparation.\n"
+            f"🛵 Un livreur prend en charge votre commande.\n\n"
+            f"📍 Livraison à : {adresse}\n"
+            f"⏱️ Temps estimé : 30-45 min\n\n"
+            f"Je vous envoie le suivi dès que le livreur est en route !"
+        )
+        # Lancer timer sécurité
+        with _order_timers_lock:
+            _order_timers[order_id] = {"validated_at": now_iso, "warned": False}
+        _start_order_timer(order_id, int(chat_id))
+
+    return jsonify({
+        "ok": True,
+        "grab_account": grab_acc["email"] if grab_acc else None,
+        "msg": "Commande validée"
+    })
+
+@app.route("/api/orders/<order_id>/cancel", methods=["POST"])
+@auth
+def api_order_cancel(order_id):
+    """Admin annule une commande → message client."""
+    orders = rj(ORDERS_F, {})
+    o = orders.get(order_id)
+    if not o:
+        return jsonify({"ok": False, "msg": "Commande introuvable"})
+
+    reason = (request.get_json(silent=True) or {}).get("reason", "")
+
+    o["statut"]     = "annule"
+    o["annule_at"]  = datetime.datetime.now().isoformat()
+    o["annule_by"]  = "admin"
+    orders[order_id] = o
+    wj(ORDERS_F, orders)
+
+    # Libérer le compte Grab si assigné
+    if o.get("grab_account"):
+        accounts = rj(ACCOUNTS_F, [])
+        for acc in accounts:
+            if acc["email"] == o["grab_account"]:
+                acc["status"]   = "grab_ready"
+                acc["in_use_at"] = None
+                acc["order_id"]  = None
+                break
+        wj(ACCOUNTS_F, accounts)
+
+    chat_id = o.get("chat_id") or o.get("user_id")
+    if chat_id:
+        msg = "😔 Votre commande a été annulée.\nUn remboursement vous sera effectué sous 24h. Désolé 🙏"
+        if reason:
+            msg = f"😔 Votre commande a été annulée : {reason}\n\nRemboursement sous 24h 🙏"
+        tg_client(int(chat_id), msg)
+
+    return jsonify({"ok": True})
+
+@app.route("/api/orders/<order_id>/delivered", methods=["POST"])
+@auth
+def api_order_delivered(order_id):
+    """Admin marque commande comme livrée → message client."""
+    orders = rj(ORDERS_F, {})
+    o = orders.get(order_id)
+    if not o:
+        return jsonify({"ok": False, "msg": "Commande introuvable"})
+
+    o["statut"]       = "livre"
+    o["delivered_at"] = datetime.datetime.now().isoformat()
+    orders[order_id]  = o
+    wj(ORDERS_F, orders)
+
+    # Libérer le compte Grab
+    if o.get("grab_account"):
+        accounts = rj(ACCOUNTS_F, [])
+        for acc in accounts:
+            if acc["email"] == o["grab_account"]:
+                acc["status"]   = "grab_ready"
+                acc["in_use_at"] = None
+                acc["order_id"]  = None
+                break
+        wj(ACCOUNTS_F, accounts)
+
+    chat_id = o.get("chat_id") or o.get("user_id")
+    if chat_id:
+        tg_client(int(chat_id),
+            "🎉 *Votre commande est arrivée !*\n\n"
+            "Bon appétit ! 🍽️\n"
+            "N'hésitez pas à recommander — /order"
+        )
+    return jsonify({"ok": True})
+
+@app.route("/api/orders/pending")
+@auth
+def api_orders_pending():
+    """Commandes en attente de validation par l'admin."""
+    orders = rj(ORDERS_F, {})
+    pending = []
+    for oid, o in orders.items():
+        if o.get("statut") in ("paiement_recu", "en_attente_confirmation", "en_cours"):
+            pending.append({"id": oid, **o})
+    pending.sort(key=lambda x: x.get("ts",""), reverse=True)
+    return jsonify(pending)
+
+@app.route("/api/grab/pool")
+@auth
+def api_grab_pool():
+    """Compte les comptes Grab disponibles dans le pool."""
+    accounts = rj(ACCOUNTS_F, [])
+    ready  = sum(1 for a in accounts if a.get("status") == "grab_ready")
+    in_use = sum(1 for a in accounts if a.get("status") == "in_use")
+    total  = len(accounts)
+    return jsonify({"ready": ready, "in_use": in_use, "total": total})
+
+@app.route("/api/hours", methods=["GET", "POST"])
+@auth
+def api_hours():
+    if request.method == "POST":
+        d = request.get_json(silent=True) or {}
+        h = get_hours()
+        h.update({k: v for k, v in d.items() if k in ("open","close","tz","enabled")})
+        wj(HOURS_F, h)
+        return jsonify({"ok": True, "hours": h})
+    return jsonify(get_hours())
+
+@app.route("/api/hours/check")
+@auth
+def api_hours_check():
+    return jsonify({"open": is_open(), "hours": get_hours()})
+
+@app.route("/api/sms/config", methods=["GET", "POST"])
+@auth
+def api_sms_config():
+    global HEROSMS_KEY
+    if request.method == "POST":
+        key = (request.get_json(silent=True) or {}).get("key", "").strip()
+        if key:
+            HEROSMS_KEY = key
+            env_path = BASE / ".env"
+            try:
+                lines = env_path.read_text().splitlines() if env_path.exists() else []
+                new_lines = [l for l in lines if not l.startswith("HEROSMS_KEY=")]
+                new_lines.append(f"HEROSMS_KEY={key}")
+                env_path.write_text("\n".join(new_lines) + "\n")
+            except Exception:
+                pass
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "msg": "Clé vide"})
+    return jsonify({"ok": bool(HEROSMS_KEY), "configured": bool(HEROSMS_KEY)})
+
+# ─────────────────────────────────────────────────────────────
+#  GRAB ACCOUNT CREATION PIPELINE
+# ─────────────────────────────────────────────────────────────
+
+_grab_pipeline_status = {"running": False, "log": "", "last_result": None}
+
+@app.route("/api/grabgen/run", methods=["POST"])
+@auth
+def api_grabgen_run():
+    if _grab_pipeline_status["running"]:
+        return jsonify({"ok": False, "msg": "Pipeline déjà en cours"})
+    d = request.get_json(silent=True) or {}
+    onoff_email  = d.get("onoff_email", "")
+    onoff_pass   = d.get("onoff_pass", "")
+    phone        = d.get("phone", "")
+    icloud_email = d.get("icloud_email", "")
+    channel      = d.get("channel", "sms")
+
+    if not all([onoff_email, onoff_pass, phone]):
+        return jsonify({"ok": False, "msg": "onoff_email, onoff_pass et phone requis"})
+
+    def _run():
+        import asyncio as _aio
+        _grab_pipeline_status["running"] = True
+        _grab_pipeline_status["log"]     = "🚀 Pipeline démarré…\n"
+        try:
+            sys.path.insert(0, str(BASE))
+            from grab_gen.pipeline import run_pipeline
+            result = _aio.run(run_pipeline(
+                onoff_email  = onoff_email,
+                onoff_pass   = onoff_pass,
+                phone_number = phone,
+                icloud_email = icloud_email,
+                headless     = True,
+                otp_channel  = channel,
+            ))
+            if result:
+                _grab_pipeline_status["log"]        += f"\n✅ Compte créé !\n📧 {result['icloud_email']}\n🔑 {result['password']}"
+                _grab_pipeline_status["last_result"] = result
+                _reload_accounts()
+            else:
+                _grab_pipeline_status["log"] += "\n❌ Pipeline échoué — voir screenshots /tmp/grab_*.png"
+        except Exception as e:
+            _grab_pipeline_status["log"] += f"\n❌ Erreur : {e}"
+        finally:
+            _grab_pipeline_status["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True})
+
+@app.route("/api/grabgen/status")
+@auth
+def api_grabgen_status():
+    return jsonify(_grab_pipeline_status)
+
+# ── Orchestrateur permanent ────────────────────────────────
+_orch_thread = None
+
+@app.route("/api/orch/start", methods=["POST"])
+@auth
+def api_orch_start():
+    global _orch_thread
+    from grab_gen.orchestrator import start_background, get_state
+    s = get_state()
+    if s.get("running"):
+        return jsonify({"ok": False, "msg": "Deja en cours"})
+    _orch_thread = start_background()
+    return jsonify({"ok": True})
+
+@app.route("/api/orch/stop", methods=["POST"])
+@auth
+def api_orch_stop():
+    from grab_gen.orchestrator import stop
+    stop()
+    return jsonify({"ok": True})
+
+@app.route("/api/orch/status")
+@auth
+def api_orch_status():
+    try:
+        from grab_gen.orchestrator import get_state
+        return jsonify(get_state())
+    except Exception as e:
+        return jsonify({"running": False, "error": str(e)})
+
+@app.route("/api/orch/devices")
+@auth
+def api_orch_devices():
+    from grab_gen.orchestrator import get_adb_devices
+    return jsonify({"devices": get_adb_devices()})
+
+@app.route("/api/grabgen/config", methods=["GET", "POST"])
+@auth
+def api_grabgen_config():
+    """Sauvegarde les credentials OnOff dans .env."""
+    if request.method == "POST":
+        d = request.get_json(silent=True) or {}
+        env_path = BASE / ".env"
+        try:
+            lines = env_path.read_text().splitlines() if env_path.exists() else []
+            for key in ["ONOFF_EMAIL", "ONOFF_PASS"]:
+                val = d.get(key.lower().replace("onoff_", "onoff_"), "")
+                if val:
+                    lines = [l for l in lines if not l.startswith(f"{key}=")]
+                    lines.append(f"{key}={val}")
+            env_path.write_text("\n".join(lines) + "\n")
+            return jsonify({"ok": True})
+        except Exception as e:
+            return jsonify({"ok": False, "msg": str(e)})
+    return jsonify({
+        "onoff_email": os.environ.get("ONOFF_EMAIL", ""),
+        "configured":  bool(os.environ.get("ONOFF_EMAIL")),
+    })
+
+@app.route("/api/grabgen/explore", methods=["POST"])
+@auth
+def api_grabgen_explore():
+    """Lance l'exploration de l'interface Grab signup (calibrage sélecteurs)."""
+    def _explore():
+        import asyncio as _aio, sys as _sys
+        _sys.path.insert(0, str(BASE))
+        from grab_gen.grab_reg import GrabRegistration
+        async def _run():
+            async with GrabRegistration(headless=True) as gr:
+                return await gr.explore_signup()
+        return _aio.run(_run())
+    try:
+        result = _explore()
+        return jsonify({"ok": True, "data": result})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
 
 @app.route("/api/reply", methods=["POST"])
 @auth
@@ -642,35 +1538,99 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
   <!-- ACCOUNTS -->
   <div id="page-accounts" style="display:none">
     <div class="topbar">
-      <span class="page-title">🍎 Comptes Grab — iCloud HME</span>
-      <button class="btn btn-primary" style="margin-left:auto" onclick="openGenModal()">⚡ Générer un email</button>
+      <span class="page-title">🏭 Usine Grab — Packs Identité</span>
+      <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
+        <div style="background:var(--s2);border-radius:8px;padding:6px 12px;font-size:.82rem;color:var(--t3)" title="Solde SMSPool (numéros TH bloqués par Grab — utiliser HeroSMS €0.03/n°)">
+          💰 SMSPool : <span id="smsPoolBal" style="color:var(--green);font-weight:700">—</span>
+        </div>
+        <button class="btn btn-secondary" onclick="openGenModal()">⚡ + Emails</button>
+        <button id="orchStartBtn" class="btn btn-primary" style="background:#00b14f" onclick="orchStart()">▶ Lancer l'usine</button>
+        <button id="orchStopBtn" class="btn btn-secondary" onclick="orchStop()" style="display:none">⏹ Arrêter</button>
+      </div>
     </div>
     <div class="content">
-      <!-- Quota Apple -->
-      <div class="quota-card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <div style="font-weight:700">Quota Apple HME</div>
-          <div class="pill" id="quotaPill">—</div>
+
+      <!-- 3 compteurs top -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
+        <div class="card" style="padding:16px 20px;text-align:center">
+          <div style="font-size:2rem;font-weight:800;color:var(--green)" id="packsDispo">—</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Emails disponibles</div>
         </div>
-        <div style="font-size:.8rem;color:var(--t3)" id="quotaSub">Chargement…</div>
-        <div class="quota-bar-bg"><div class="quota-bar-fill" id="quotaBar" style="width:0%"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:.75rem;color:var(--t3)">
-          <span id="quotaUsed">0/5 aujourd'hui</span>
-          <span id="quotaReset">Reset : —</span>
+        <div class="card" style="padding:16px 20px;text-align:center">
+          <div style="font-size:2rem;font-weight:800;color:var(--blue)" id="packsEnCours">—</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">En création</div>
+        </div>
+        <div class="card" style="padding:16px 20px;text-align:center">
+          <div style="font-size:2rem;font-weight:800;color:var(--purple)" id="packsReady">—</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Comptes Grab prêts</div>
         </div>
       </div>
 
-      <!-- Emails table -->
+      <!-- Auto-génération emails iCloud -->
+      <div class="quota-card" style="border-color:#00b14f33;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="font-weight:700;margin-bottom:2px">🍎 Auto-génération emails iCloud</div>
+            <div style="font-size:.78rem;color:var(--t3)" id="autoGenNext">—</div>
+          </div>
+          <div style="font-size:.82rem;color:var(--t3)">Total : <span id="autoGenTotal" style="font-weight:700;color:var(--green)">0</span></div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <span style="font-size:.82rem;color:var(--t3)" id="autoGenLabel">Désactivé</span>
+            <div style="position:relative;width:42px;height:24px" onclick="toggleAutoGen()">
+              <div id="autoGenTrack" style="width:42px;height:24px;border-radius:12px;background:var(--s3);transition:.2s"></div>
+              <div id="autoGenThumb" style="position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s"></div>
+            </div>
+          </label>
+          <button class="btn btn-secondary btn-sm" onclick="runNow()">▶ Now</button>
+        </div>
+      </div>
+
+      <!-- Tableau des packs -->
       <div class="table-wrap">
         <div class="table-header">
-          <span class="table-title">Emails iCloud actifs</span>
-          <span class="pill pill-green" id="emailCount" style="margin-left:8px">0</span>
+          <span class="table-title">📦 Packs prêts à inscrire — 1 email = 1 identité = 1 compte</span>
+          <span class="pill pill-green" id="packCount" style="margin-left:8px">0</span>
+          <button class="btn btn-secondary btn-sm" style="margin-left:auto;font-size:.75rem" onclick="resetFailed()" title="Remettre les comptes en échec en disponible">🔄 Reset failed</button>
         </div>
         <table>
-          <thead><tr><th>Email iCloud</th><th>Créé le</th><th>Statut</th><th>Compte Grab</th><th>Actions</th></tr></thead>
-          <tbody id="accountsTable"></tbody>
+          <thead>
+            <tr>
+              <th style="width:24px"></th>
+              <th>Email iCloud</th>
+              <th>Identité + MDP</th>
+              <th>Adresse Bangkok</th>
+              <th>Statut</th>
+              <th style="width:120px">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="packsTable"><tr><td colspan="6" style="text-align:center;color:var(--t3);padding:24px">Chargement…</td></tr></tbody>
         </table>
       </div>
+
+      <!-- Orchestrateur stats + log -->
+      <div class="card" style="margin-top:20px">
+        <div class="table-header">
+          <span class="table-title">📊 Usine — Stats temps réel</span>
+          <span id="orchSpeed" style="color:var(--t3);font-size:.85rem">0 comptes/h</span>
+        </div>
+        <div style="padding:16px 20px">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+            <div class="stat-mini"><div id="orchTotal" style="font-size:1.8rem;font-weight:700;color:var(--green)">0</div><div style="color:var(--t3);font-size:.75rem">Créés total</div></div>
+            <div class="stat-mini"><div id="orchFailed" style="font-size:1.8rem;font-weight:700;color:var(--orange)">0</div><div style="color:var(--t3);font-size:.75rem">Échecs</div></div>
+            <div class="stat-mini"><div id="orchWorkers" style="font-size:1.8rem;font-weight:700;color:var(--blue)">0</div><div style="color:var(--t3);font-size:.75rem">Workers actifs</div></div>
+            <div class="stat-mini"><div id="orchDevices" style="font-size:1.8rem;font-weight:700;color:var(--purple)">0</div><div style="color:var(--t3);font-size:.75rem">Devices ADB</div></div>
+          </div>
+          <table style="width:100%;font-size:.8rem">
+            <thead><tr><th>Device</th><th>Statut</th><th>Email en cours</th><th>Téléphone</th><th>Créés</th><th>Échecs</th></tr></thead>
+            <tbody id="orchWorkersTable"><tr><td colspan="6" style="text-align:center;color:var(--t3);padding:16px">Aucun worker — cliquez sur Lancer l'usine</td></tr></tbody>
+          </table>
+          <div style="margin-top:12px">
+            <div style="color:var(--t3);font-size:.75rem;margin-bottom:4px">Log</div>
+            <div id="orchLog" style="background:var(--bg2,var(--s1));border-radius:8px;padding:12px;font-family:monospace;font-size:.72rem;height:160px;overflow-y:auto;color:var(--t2)"></div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -693,12 +1653,118 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 <!-- GENERATE MODAL -->
 <div class="modal-overlay" id="genModal">
   <div class="modal">
-    <h2>⚡ Générer un email iCloud HME</h2>
+    <h2>⚡ Générer des emails iCloud HME</h2>
     <div class="sub">Chrome doit être ouvert et connecté à iCloud. Limite Apple : ~5 par session / 24h.</div>
+    <div style="margin:12px 0;display:flex;align-items:center;gap:12px;">
+      <label style="font-weight:600;white-space:nowrap;">Nombre d'emails :</label>
+      <input type="number" id="genCount" value="5" min="1" max="25" style="width:70px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:15px;text-align:center;">
+      <span style="color:#888;font-size:13px;">(max 25)</span>
+    </div>
     <div class="gen-log" id="genLog">En attente de lancement…</div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeGenModal()">Fermer</button>
       <button class="btn btn-primary" id="genStartBtn" onclick="startGen()">🚀 Lancer la génération</button>
+    </div>
+  </div>
+</div>
+
+<!-- SMS MODAL -->
+<div class="modal-overlay" id="smsModal">
+  <div class="modal" style="max-width:480px">
+    <h2>📱 Numéro virtuel SMS-Activate</h2>
+    <div class="sub" id="smsModalEmail" style="color:var(--purple);font-family:monospace;font-size:.9rem"></div>
+
+    <!-- Config clé API -->
+    <div id="smsConfigSection" style="display:none;background:var(--s2);border-radius:10px;padding:14px;margin:12px 0">
+      <div style="font-weight:600;margin-bottom:8px">🔑 Clé API SMS-Activate requise</div>
+      <div style="font-size:.82rem;color:var(--t3);margin-bottom:10px">Créez un compte sur <b>hero-sms.com</b> → Profil → API Key → Copier la clé</div>
+      <div style="display:flex;gap:8px">
+        <input id="herosmsKeyInput" type="password" placeholder="Votre clé API SMS-Activate…" style="flex:1;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem">
+        <button class="btn btn-primary btn-sm" onclick="saveFivesimKey()">Enregistrer</button>
+      </div>
+    </div>
+
+    <!-- Solde -->
+    <div id="smsBalance" style="font-size:.82rem;color:var(--t3);margin-bottom:12px"></div>
+
+    <!-- Info numéro + code -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0">
+      <div style="background:var(--s2);border-radius:10px;padding:14px;text-align:center">
+        <div style="font-size:.72rem;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Numéro TH</div>
+        <div id="smsPhone" style="font-family:monospace;font-size:1.1rem;font-weight:700;color:var(--t1)">—</div>
+      </div>
+      <div style="background:var(--s2);border-radius:10px;padding:14px;text-align:center">
+        <div style="font-size:.72rem;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Code OTP</div>
+        <div id="smsCode" style="font-family:monospace;font-size:1.4rem;font-weight:800;color:var(--green);letter-spacing:.15em">—</div>
+      </div>
+    </div>
+
+    <!-- Statut -->
+    <div id="smsStatus" style="text-align:center;font-weight:600;margin-bottom:8px;color:var(--t3)">En attente…</div>
+    <pre id="smsLog" style="background:var(--s2);border-radius:8px;padding:12px;font-size:.78rem;color:var(--t2);min-height:60px;white-space:pre-wrap;max-height:120px;overflow-y:auto"></pre>
+
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn btn-secondary" onclick="closeSmsModal()">Fermer</button>
+      <button class="btn btn-secondary" id="smsCancelBtn" style="display:none;color:var(--red)" onclick="cancelSms()">⛔ Annuler numéro</button>
+      <button class="btn btn-primary" id="smsFinishBtn" style="display:none" onclick="finishSms()">✅ Compte créé — Terminer</button>
+      <button class="btn btn-primary" id="smsBuyBtn" style="background:#7c3aed" onclick="startSmsBuy()">📱 Acheter un numéro</button>
+    </div>
+  </div>
+</div>
+
+<!-- MARK CREATED MODAL -->
+<div class="modal-overlay" id="markCreatedModal" onclick="if(event.target===this)closeMarkCreated()">
+  <div class="modal" style="max-width:440px">
+    <h2>✅ Compte Grab créé</h2>
+    <div class="sub">Pack : <span id="markCreatedEmailDisplay" style="color:var(--purple);font-family:monospace"></span></div>
+    <div style="margin:18px 0 12px">
+      <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:6px">📱 Numéro de téléphone utilisé (laisser vide si inconnu)</label>
+      <input id="markCreatedPhone" type="text" placeholder="+66XXXXXXXXX" style="width:100%;padding:9px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.9rem;box-sizing:border-box" onkeydown="if(event.key==='Enter')submitMarkCreated()">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeMarkCreated()">Annuler</button>
+      <button class="btn btn-primary" style="background:#00b14f" onclick="submitMarkCreated()">✅ Confirmer créé</button>
+    </div>
+  </div>
+</div>
+
+<!-- GRAB GEN MODAL -->
+<div class="modal-overlay" id="grabGenModal">
+  <div class="modal" style="max-width:500px">
+    <h2>🤖 Créer un compte Grab</h2>
+    <div class="sub">Pipeline automatique : OnOff → OTP → Compte Grab lié à l'email iCloud</div>
+
+    <div style="display:grid;gap:10px;margin:14px 0">
+      <div>
+        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">📧 Email iCloud (laisser vide = prochain disponible)</label>
+        <input id="ggIcloud" type="text" placeholder="ex: abc@icloud.com ou laisser vide" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">🔑 Email compte OnOff</label>
+        <input id="ggOnoffEmail" type="email" placeholder="votre@email.com" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">🔐 Mot de passe OnOff</label>
+        <input id="ggOnoffPass" type="password" placeholder="••••••••" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">📱 Numéro OnOff (avec indicatif)</label>
+        <input id="ggPhone" type="text" placeholder="+33612345678" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">📡 Canal OTP</label>
+        <select id="ggChannel" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem">
+          <option value="sms">SMS</option>
+          <option value="whatsapp">WhatsApp</option>
+        </select>
+      </div>
+    </div>
+
+    <pre id="ggLog" style="background:var(--s2);border-radius:8px;padding:12px;font-size:.78rem;color:var(--t2);min-height:60px;white-space:pre-wrap;max-height:140px;overflow-y:auto">En attente…</pre>
+
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn btn-secondary" onclick="closeGrabGenModal()">Fermer</button>
+      <button class="btn btn-primary" id="ggRunBtn" onclick="runGrabGen()" style="background:#00b14f">🚀 Créer le compte</button>
     </div>
   </div>
 </div>
@@ -740,7 +1806,7 @@ function nav(p){
   });
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
   if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList();}
-  if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadAccounts();}
+  if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadPacks(); loadSmsPoolBalance(); loadAutoGen(); orchStartPolling();}
   _page=p;
 }
 
@@ -1019,58 +2085,338 @@ async function markRead(uid){
   if(_msgs[uid]) _msgs[uid].unread=0;
 }
 
+// ── AUTO-GEN ──────────────────────────────────────────────
+let _autoGenEnabled=false;
+async function loadAutoGen(){
+  try{
+    const r=await fetch('/api/autogen/status'); const d=await r.json();
+    _autoGenEnabled=d.enabled;
+    // Toggle visuel
+    const track=$('autoGenTrack'); const thumb=$('autoGenThumb');
+    if(track){track.style.background=d.enabled?'var(--green)':'var(--s3)';}
+    if(thumb){thumb.style.left=d.enabled?'21px':'3px';}
+    $('autoGenLabel').textContent=d.enabled?'Activé':'Désactivé';
+    $('autoGenLabel').style.color=d.enabled?'var(--green)':'var(--t3)';
+    // Prochain run
+    if(d.next_run){
+      const dt=new Date(d.next_run);
+      const diff=Math.round((dt-Date.now())/60000);
+      $('autoGenNext').textContent=d.enabled?`Prochain run dans ${diff} min (${dt.toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'})})`:'Désactivé — 5 emails/heure automatiquement';
+    } else {
+      $('autoGenNext').textContent=d.enabled?'En cours de planification…':'Activez pour générer 5 emails toutes les 65 min';
+    }
+    $('autoGenTotal').textContent=d.total||0;
+    // Historique runs
+    if(d.log&&d.log.length){
+      $('autoGenLog').style.display='block';
+      $('autoGenLog').innerHTML='<b>Historique :</b> '+d.log.slice(0,5).map(l=>`<span style="margin-right:10px">${l.ts} → ${l.ok?'<span style="color:var(--green)">+'+l.count+'</span>':'<span style="color:var(--red)">0</span>'}</span>`).join('');
+    }
+  }catch(e){}
+}
+async function toggleAutoGen(){
+  const r=await fetch('/api/autogen/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!_autoGenEnabled,interval:65,count:5})});
+  const d=await r.json();
+  if(d.ok){toast(d.enabled?'🤖 Auto-génération activée !':'Auto-génération désactivée',d.enabled);}
+  await loadAutoGen();
+}
+async function runNow(){
+  const r=await fetch('/api/autogen/runnow',{method:'POST'}); const d=await r.json();
+  if(d.ok){toast('🔄 Génération lancée…');setTimeout(()=>{loadAccounts();loadAutoGen();},8000);}
+  else toast('⚠ '+d.msg,false);
+}
+
 // ── ACCOUNTS ──────────────────────────────────────────────
 async function loadAccounts(){
-  const r=await fetch('/api/accounts'); const d=await r.json();
-  _accounts=d.accounts||[];
-  const q=d.quota||{};
-  // Quota bar
-  const pct=Math.round((q.used||0)/(q.limit||5)*100);
-  const barEl=document.getElementById('quotaBar');
-  if(barEl){barEl.style.width=pct+'%';barEl.className='quota-bar-fill'+(pct>=100?' full':pct>=80?' warn':'');}
-  const pill=document.getElementById('quotaPill');
-  if(pill){pill.className='pill '+(pct>=100?'pill-red':pct>=80?'pill-orange':'pill-green');pill.textContent=pct>=100?'Quota atteint':pct>=80?'Presque plein':'Disponible';}
-  if(document.getElementById('quotaUsed')) $('quotaUsed').textContent=`${q.used||0}/${q.limit||5} aujourd'hui`;
-  if(document.getElementById('quotaReset')) $('quotaReset').textContent=`Reset : ${q.reset||'—'}`;
-  if(document.getElementById('quotaSub')) $('quotaSub').textContent=`${q.remaining||0} génération${(q.remaining||0)>1?'s':''} restante${(q.remaining||0)>1?'s':''} · Limite Apple ~5/session/24h`;
-  // Table
-  const tbody=document.getElementById('accountsTable'); if(!tbody)return;
-  $('emailCount').textContent=_accounts.length;
-  if(!_accounts.length){tbody.innerHTML=`<tr><td colspan="5"><div class="empty"><div class="empty-icon">📭</div>Aucun email — cliquez sur "Générer"</div></td></tr>`;return;}
-  tbody.innerHTML=_accounts.map(a=>{
-    const used=a.status==='used';
-    const safeEmail=escHtml(a.email||'');
-    const safePhone=escHtml(a.grab_phone||'—');
-    const safeDate=escHtml((a.created||'').slice(0,10));
-    return `<tr>
-      <td class="mono" style="color:var(--purple)">${safeEmail}</td>
-      <td style="color:var(--t3);font-size:.78rem">${safeDate}</td>
-      <td>${used?'<span class="pill pill-orange">🔗 Utilisé</span>':'<span class="pill pill-green">✅ Disponible</span>'}</td>
-      <td><span style="font-size:.8rem;color:var(--t2)">${safePhone}</span></td>
-      <td style="display:flex;gap:6px">
-        <button class="btn btn-secondary btn-sm" onclick="copyEmail('${safeEmail}')">Copier</button>
-        <button class="btn ${used?'btn-secondary':'btn-blue'} btn-sm" onclick="toggleAccountStatus('${safeEmail}','${used?'available':'used'}')">${used?'Libérer':'Marquer utilisé'}</button>
-      </td>
-    </tr>`;
-  }).join('');
+  // Compatibilité — maintenant on charge les packs
+  await loadPacks();
+  await loadSmsPoolBalance();
+}
+
+async function loadSmsPoolBalance(){
+  try{
+    const r=await fetch('/api/smspool/balance'); const d=await r.json();
+    if(document.getElementById('smsPoolBal')){
+      $('smsPoolBal').textContent=d.ok?`$${(d.balance||0).toFixed(2)}`:'N/A';
+      $('smsPoolComptes').textContent=d.ok?(d.comptes_possibles||0):'?';
+    }
+  }catch(e){}
+}
+
+async function loadPacks(){
+  try{
+    const r=await fetch('/api/packs'); const d=await r.json();
+    const packs=d.packs||[];
+    // Compteurs
+    const dispo=packs.filter(p=>p.status==='available'&&!p._locked).length;
+    const enCours=packs.filter(p=>p._locked||p.status==='en_cours').length;
+    const ready=packs.filter(p=>p.status==='grab_ready').length;
+    if($('packsDispo'))  $('packsDispo').textContent=dispo;
+    if($('packsEnCours'))$('packsEnCours').textContent=enCours;
+    if($('packsReady'))  $('packsReady').textContent=ready;
+    if($('packCount'))   $('packCount').textContent=packs.length;
+    // Table
+    const tbody=document.getElementById('packsTable'); if(!tbody)return;
+    if(!packs.length){tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:24px">📭 Aucun email — cliquez sur "+ Emails"</td></tr>`;return;}
+    const STATUS_PACK={
+      'grab_ready':  '<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Créé</span>',
+      'available':   '<span class="pill pill-green">🟢 Dispo</span>',
+      'failed':      '<span class="pill pill-red">❌ Échoué</span>',
+      'en_cours':    '<span class="pill pill-blue">⏳ En cours</span>',
+    };
+    tbody.innerHTML=packs.map(p=>{
+      const e=escHtml(p.email||'');
+      const emailRaw=p.email||'';
+      const name=escHtml(p.full_name||`${p.prenom} ${p.nom}`);
+      const nameRaw=p.full_name||`${p.prenom} ${p.nom}`;
+      const addrFull=p.bangkok_addr||'';
+      const addr=escHtml(addrFull.slice(0,50));
+      const phone=p.phone||'';
+      const pass='114722165uLCL';
+      const locked=p._locked;
+      const status=locked?'en_cours':(p.status||'available');
+      const badge=STATUS_PACK[status]||`<span class="pill">${status}</span>`;
+      const errTip=p._last_error?`title="${escHtml(p._last_error)}"`:''
+      const failBadge=p._fail_count>0?`<span style="color:var(--orange);font-size:.7rem;margin-left:4px" ${errTip}>⚠ ${p._fail_count}x</span>`:'';
+      const phoneLine=phone
+        ?`<div style="font-family:monospace;font-size:.72rem;color:var(--green);margin-top:2px">📱 ${escHtml(phone)}</div>`
+        :``;
+      // Actions : copy (toujours) + mark created (si pas encore créé)
+      const copyBtn=`<button class="btn btn-secondary btn-sm" style="font-size:.7rem;padding:3px 7px" onclick='copyPackData(${JSON.stringify({email:emailRaw,name:nameRaw,addr:addrFull,pass,phone})})' title="Copier toutes les données">📋</button>`;
+      const doneBtn=status!=='grab_ready'
+        ?`<button class="btn btn-primary btn-sm" style="font-size:.7rem;padding:3px 7px;background:#00b14f;margin-left:4px" onclick="openMarkCreated('${emailRaw.replace(/'/g,"\\'")}')" title="Marquer comme créé">✅</button>`
+        :``;
+      return `<tr>
+        <td style="padding:0 6px;color:${locked?'var(--orange)':'var(--t3)'}">
+          ${locked?'⏳':'•'}
+        </td>
+        <td style="font-size:.77rem">
+          <div class="mono" style="color:var(--purple)">${e}</div>
+          ${phoneLine}
+        </td>
+        <td style="font-size:.82rem">
+          <div style="font-weight:600;color:var(--t1)">${name}</div>
+          <div style="color:var(--t3);font-size:.72rem">🇫🇷 · 🔑 <span class="mono">${pass}</span></div>
+        </td>
+        <td style="font-size:.74rem;color:var(--t3);max-width:220px" title="${escHtml(addrFull)}">
+          📍 ${addr}${addrFull.length>50?'…':''}
+        </td>
+        <td>${badge}${failBadge}</td>
+        <td>${copyBtn}${doneBtn}</td>
+      </tr>`;
+    }).join('');
+  }catch(ex){
+    const tbody=document.getElementById('packsTable');
+    if(tbody)tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--red);padding:16px">Erreur: ${ex.message}</td></tr>`;
+  }
+}
+function copyPackData(p){
+  const lines=['📧 Email    : '+p.email,'👤 Nom      : '+p.name,'📍 Adresse  : '+p.addr,'🔑 MDP      : '+p.pass];
+  if(p.phone) lines.push('📱 Tél      : '+p.phone);
+  const txt=lines.join('\\n');
+  navigator.clipboard.writeText(txt).then(()=>toast('📋 Données copiées !')).catch(()=>{
+    const el=document.createElement('textarea');
+    el.value=txt; document.body.appendChild(el); el.select();
+    document.execCommand('copy'); document.body.removeChild(el);
+    toast('📋 Données copiées !');
+  });
+}
+// ── Modal "Marquer créé" ──────────────────────────────────
+let _markEmail='';
+function openMarkCreated(email){
+  _markEmail=email;
+  const modal=document.getElementById('markCreatedModal');
+  if(modal){
+    document.getElementById('markCreatedEmailDisplay').textContent=email;
+    document.getElementById('markCreatedPhone').value='';
+    modal.classList.add('open');
+  }
+}
+function closeMarkCreated(){
+  const modal=document.getElementById('markCreatedModal');
+  if(modal) modal.classList.remove('open');
+}
+async function submitMarkCreated(){
+  const phone=document.getElementById('markCreatedPhone').value.trim();
+  const r=await fetch('/api/packs/mark_created',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_markEmail,phone})});
+  const d=await r.json();
+  if(d.ok){toast('✅ Compte marqué comme créé !');closeMarkCreated();await loadPacks();}
+  else toast('❌ '+d.msg,false);
+}
+async function resetFailed(){
+  const r=await fetch('/api/packs/reset_failed',{method:'POST'});
+  const d=await r.json();
+  toast(`🔄 ${d.reset} comptes remis en disponible`);
+  await loadPacks();
 }
 function copyEmail(e){navigator.clipboard.writeText(e);toast('📋 Email copié !');}
+function copyGrabPass(btn){navigator.clipboard.writeText(btn.dataset.pass||'');toast('🔑 Mot de passe copié !');}
 async function toggleAccountStatus(email,status){
-  let phone='';
-  if(status==='used'){phone=prompt('Numéro de téléphone du compte Grab (optionnel):','')||'';}
-  await fetch('/api/accounts/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,status,grab_phone:phone})});
+  await fetch('/api/accounts/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,status,grab_phone:''})});
   toast(status==='used'?'🔗 Marqué comme utilisé':'✅ Libéré');
   await loadAccounts();
+}
+
+// ── SMS MODAL ─────────────────────────────────────────────
+let _smsOrderId=null, _smsPoll=null, _smsEmail='';
+function openSmsModal(email){
+  _smsEmail=email;
+  _smsOrderId=null;
+  if(_smsPoll){clearInterval(_smsPoll);_smsPoll=null;}
+  $('smsModalEmail').textContent=email;
+  $('smsPhone').textContent='—';
+  $('smsCode').textContent='—';
+  $('smsStatus').textContent='En attente…';
+  $('smsStatus').style.color='var(--t3)';
+  $('smsBuyBtn').disabled=false;
+  $('smsCancelBtn').style.display='none';
+  $('smsFinishBtn').style.display='none';
+  $('smsLog').textContent='';
+  // Vérifie la clé SMS-Activate
+  fetch('/api/sms/config').then(r=>r.json()).then(d=>{
+    if(!d.configured){
+      $('smsConfigSection').style.display='block';
+      $('smsBuyBtn').disabled=true;
+    } else {
+      $('smsConfigSection').style.display='none';
+      // Affiche le solde
+      fetch('/api/sms/balance').then(r=>r.json()).then(b=>{
+        if(b.ok) $('smsBalance').textContent=`Solde SMS-Activate : ${parseFloat(b.balance).toFixed(2)} $`;
+      });
+    }
+  });
+  document.getElementById('smsModal').classList.add('open');
+}
+function closeSmsModal(){
+  document.getElementById('smsModal').classList.remove('open');
+  if(_smsPoll){clearInterval(_smsPoll);_smsPoll=null;}
+}
+async function saveFivesimKey(){
+  const key=$('herosmsKeyInput').value.trim();
+  if(!key)return;
+  const r=await fetch('/api/sms/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
+  const d=await r.json();
+  if(d.ok){toast('✅ Clé SMS-Activate enregistrée !');$('smsConfigSection').style.display='none';$('smsBuyBtn').disabled=false;fetch('/api/sms/balance').then(r=>r.json()).then(b=>{if(b.ok)$('smsBalance').textContent=`Solde SMS-Activate : ${parseFloat(b.balance).toFixed(2)} $`;});}
+  else toast('❌ '+d.msg,false);
+}
+async function startSmsBuy(){
+  $('smsBuyBtn').disabled=true;
+  $('smsStatus').textContent='Achat du numéro en cours…';
+  $('smsLog').textContent='🔄 Connexion à SMS-Activate…';
+  const r=await fetch('/api/sms/buy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_smsEmail})});
+  const d=await r.json();
+  if(!d.ok){$('smsStatus').textContent='❌ Erreur';$('smsLog').textContent=d.msg||'Erreur';$('smsBuyBtn').disabled=false;return;}
+  _smsOrderId=d.order_id;
+  $('smsPhone').textContent=d.phone;
+  $('smsStatus').textContent='⏳ En attente du SMS…';
+  $('smsStatus').style.color='var(--orange)';
+  $('smsCancelBtn').style.display='inline-block';
+  $('smsLog').textContent=`📱 Numéro : ${d.phone}\n⏳ En attente du code Grab…`;
+  // Poll status
+  _smsPoll=setInterval(async()=>{
+    const sr=await fetch(`/api/sms/status/${_smsOrderId}`);
+    const sd=await sr.json();
+    if(!sd.ok)return;
+    const st=sd.status;
+    if(st==='RECEIVED'){
+      clearInterval(_smsPoll);_smsPoll=null;
+      $('smsCode').textContent=sd.code||sd.sms||'—';
+      $('smsCode').style.color='var(--green)';
+      $('smsStatus').textContent='✅ SMS reçu !';
+      $('smsStatus').style.color='var(--green)';
+      $('smsLog').textContent=`📱 Numéro : ${sd.phone}\n✅ Code reçu : ${sd.code||'—'}\n📩 SMS : ${sd.sms||'—'}`;
+      $('smsCancelBtn').style.display='none';
+      $('smsFinishBtn').style.display='inline-block';
+      toast('✅ SMS reçu — code : '+sd.code);
+      await loadAccounts();
+    } else if(st==='TIMEOUT'||st==='CANCELED'||st==='BANNED'){
+      clearInterval(_smsPoll);_smsPoll=null;
+      $('smsStatus').textContent=`⚠ ${st}`;
+      $('smsStatus').style.color='var(--red)';
+      $('smsLog').textContent+=`\n⚠ Statut : ${st}`;
+      $('smsCancelBtn').style.display='none';
+      $('smsBuyBtn').disabled=false;
+      $('smsBuyBtn').textContent='🔄 Réessayer';
+    } else {
+      $('smsLog').textContent=`📱 Numéro : ${sd.phone}\n⏳ Statut : ${st}\n_En attente du SMS Grab…_`;
+    }
+  },5000);
+}
+async function cancelSms(){
+  if(!_smsOrderId)return;
+  await fetch(`/api/sms/cancel/${_smsOrderId}`,{method:'POST'});
+  if(_smsPoll){clearInterval(_smsPoll);_smsPoll=null;}
+  $('smsStatus').textContent='Annulé';
+  $('smsCancelBtn').style.display='none';
+  $('smsBuyBtn').disabled=false;
+  $('smsBuyBtn').textContent='🔄 Réessayer';
+  toast('Numéro annulé',false);
+}
+async function finishSms(){
+  if(!_smsOrderId)return;
+  await fetch(`/api/sms/finish/${_smsOrderId}`,{method:'POST'});
+  closeSmsModal();
+  await loadAccounts();
+  toast('✅ Compte créé avec succès !');
 }
 
 // ── GENERATE MODAL ────────────────────────────────────────
 let _genPoll=null;
 function openGenModal(){document.getElementById('genModal').classList.add('open'); $('genLog').textContent='Prêt à générer…';}
+
+// ── GRAB GEN MODAL ────────────────────────────────────────
+let _ggPoll=null;
+function openGrabGenModal(){
+  document.getElementById('grabGenModal').classList.add('open');
+  $('ggLog').textContent='Remplis les champs puis clique sur Créer le compte.';
+  $('ggRunBtn').disabled=false;
+  // Pré-remplit depuis .env si dispo
+  fetch('/api/grabgen/config').then(r=>r.json()).then(d=>{
+    if(d.onoff_email) $('ggOnoffEmail').value=d.onoff_email;
+  });
+}
+function closeGrabGenModal(){
+  document.getElementById('grabGenModal').classList.remove('open');
+  if(_ggPoll){clearInterval(_ggPoll);_ggPoll=null;}
+}
+async function runGrabGen(){
+  const payload={
+    icloud_email: $('ggIcloud').value.trim(),
+    onoff_email:  $('ggOnoffEmail').value.trim(),
+    onoff_pass:   $('ggOnoffPass').value.trim(),
+    phone:        $('ggPhone').value.trim(),
+    channel:      $('ggChannel').value,
+  };
+  if(!payload.onoff_email||!payload.onoff_pass||!payload.phone){
+    toast('⚠ Email OnOff, mot de passe et numéro requis',false); return;
+  }
+  $('ggRunBtn').disabled=true;
+  $('ggLog').textContent='🚀 Pipeline lancé… ⏳ Ouverture Grab + connexion OnOff…';
+  const r=await fetch('/api/grabgen/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const d=await r.json();
+  if(!d.ok){toast('❌ '+d.msg,false);$('ggRunBtn').disabled=false;return;}
+  // Poll statut
+  _ggPoll=setInterval(async()=>{
+    const sr=await fetch('/api/grabgen/status'); const sd=await sr.json();
+    $('ggLog').textContent=sd.log||'';
+    const el=$('ggLog'); el.scrollTop=el.scrollHeight;
+    if(!sd.running){
+      clearInterval(_ggPoll);_ggPoll=null;
+      $('ggRunBtn').disabled=false;
+      if(sd.last_result){
+        toast('🎉 Compte Grab créé !');
+        loadAccounts();
+      } else {
+        toast('⚠ Pipeline terminé — vérifier les logs',false);
+      }
+    }
+  },3000);
+}
 function closeGenModal(){document.getElementById('genModal').classList.remove('open');if(_genPoll){clearInterval(_genPoll);_genPoll=null;}}
 async function startGen(){
+  const n=parseInt($('genCount').value)||5;
   $('genStartBtn').disabled=true;
   $('genLog').textContent='Lancement…';
-  const r=await fetch('/api/generate/start',{method:'POST'});
+  const r=await fetch('/api/generate/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:n})});
   const d=await r.json();
   if(!d.ok){toast(d.msg||'Erreur',false);$('genStartBtn').disabled=false;return;}
   _genPoll=setInterval(async()=>{
@@ -1079,6 +2425,79 @@ async function startGen(){
     const el=$('genLog'); el.scrollTop=el.scrollHeight;
     if(!sd.running){clearInterval(_genPoll);_genPoll=null;$('genStartBtn').disabled=false;toast('✅ Génération terminée !');loadAccounts();}
   },1000);
+}
+
+// ── ORCHESTRATEUR ─────────────────────────────────────────
+let _orchPoll = null;
+
+async function preBuyNumbers(){
+  const btn = document.getElementById('preBuyBtn');
+  if(btn) btn.textContent = '⏳ Achat…';
+  try {
+    const r = await fetch('/api/packs/prebuy', {method:'POST'});
+    const d = await r.json();
+    if(d.ok){
+      toast(`📱 ${d.bought} numéros achetés !`);
+      await loadPacks();
+      await loadSmsPoolBalance();
+    } else {
+      toast('⚠ ' + (d.msg||'Erreur'), false);
+    }
+  } catch(e){ toast('❌ Erreur réseau', false); }
+  finally { if(btn) btn.textContent = '📱 Acheter numéros'; }
+}
+
+async function orchStart(){
+  const r=await fetch('/api/orch/start',{method:'POST'}); const d=await r.json();
+  if(d.ok){toast('🏭 Usine démarrée !');orchStartPolling();}
+  else toast('⚠ '+d.msg,false);
+}
+async function orchStop(){
+  await fetch('/api/orch/stop',{method:'POST'});
+  toast('⏹ Usine arrêtée');
+}
+function orchStartPolling(){
+  if(_orchPoll)clearInterval(_orchPoll);
+  _orchPoll=setInterval(orchRefresh,3000);
+  orchRefresh();
+}
+async function orchRefresh(){
+  try{
+    const r=await fetch('/api/orch/status'); const s=await r.json();
+    // Boutons
+    const startBtn=$('orchStartBtn'); const stopBtn=$('orchStopBtn');
+    if(startBtn) startBtn.style.display=s.running?'none':'inline-flex';
+    if(stopBtn) stopBtn.style.display=s.running?'inline-flex':'none';
+    // Stats
+    if($('orchTotal')) $('orchTotal').textContent=s.total_created||0;
+    if($('orchFailed')) $('orchFailed').textContent=s.total_failed||0;
+    if($('orchSpeed')) $('orchSpeed').textContent=(s.speed||0)+' comptes/h';
+    const workers=Object.values(s.workers||{});
+    if($('orchWorkers')) $('orchWorkers').textContent=workers.filter(w=>w.status!=='stopped').length;
+    // Workers table
+    const tbody=$('orchWorkersTable');
+    if(tbody&&workers.length){
+      const statusEmoji={waiting_email:'⏳',buying_phone:'💳',registering:'🤖',idle:'✅',error:'❌',stopped:'⏹',starting:'🔄'};
+      tbody.innerHTML=workers.map((w,i)=>`<tr>
+        <td class="mono" style="color:var(--purple)">device-${i+1}</td>
+        <td>${statusEmoji[w.status]||'❓'} ${w.status}</td>
+        <td style="color:var(--t3);font-size:.75rem">${escHtml(w.current_email||'—')}</td>
+        <td style="color:var(--green);font-family:monospace;font-size:.78rem">${escHtml(w.current_phone||'—')}</td>
+        <td style="color:var(--green)">${w.created}</td>
+        <td style="color:var(--orange)">${w.failed}</td>
+      </tr>`).join('');
+    }
+    // Refresh packs table pendant que l'usine tourne
+    if(s.running) loadPacks();
+    // Devices count
+    try{
+      const dr=await fetch('/api/orch/devices'); const dd=await dr.json();
+      if($('orchDevices')) $('orchDevices').textContent=(dd.devices||[]).length;
+    }catch(e){}
+    // Log
+    const logEl=$('orchLog');
+    if(logEl){logEl.textContent=(s.log||[]).join('\\n');logEl.scrollTop=logEl.scrollHeight;}
+  }catch(e){}
 }
 
 // ── RECENT ACTIVITY ───────────────────────────────────────
@@ -1121,6 +2540,20 @@ async function refreshAll(){
     if(el){el.textContent=avail+'/'+total+' disponibles';el.style.color=avail>0?'var(--green)':'var(--orange)';}
   }catch(e){}
 }
+// ── HASH NAVIGATION ──────────────────────────────────────
+(function(){
+  const pages = ['overview','orders','chat','accounts'];
+  function hashNav(){
+    const h = window.location.hash.replace('#','');
+    if(pages.includes(h)) nav(h);
+  }
+  window.addEventListener('hashchange', hashNav);
+  // Apply on load
+  hashNav();
+  // Update hash when nav is clicked
+  const _origNav = nav;
+  window.nav = function(p){ _origNav(p); history.replaceState(null,'','#'+p); };
+})();
 refreshAll();
 setInterval(refresh, 15000);
 setInterval(()=>Promise.all([loadDispo(),loadBotStatus(),loadRestoCount()]), 30000);
@@ -1133,5 +2566,11 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=int(os.environ.get("DASHBOARD_PORT", 5001)))
     a = p.parse_args()
+    # Importe au démarrage les emails déjà générés mais pas encore dans accounts.json
+    _reload_accounts()
+    # Active l'auto-génération dès le démarrage (5 emails toutes les 65 min)
+    _auto_gen["enabled"] = True
+    _schedule_next()
+    print(f"🤖 Auto-génération iCloud HME activée — 5 emails toutes les 65 min")
     print(f"🛵 GrabDiscount QG → http://localhost:{a.port}   |   pwd: {DASHBOARD_PWD}")
     app.run(host="0.0.0.0", port=a.port, debug=False)

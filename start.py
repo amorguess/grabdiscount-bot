@@ -1,12 +1,18 @@
 """
-Render / Raspberry Pi entry point
-HTTP health check en thread principal, bot + scraper en daemon threads
+start.py — Point d'entrée unique Render / Raspberry Pi
+=======================================================
+Lance en parallèle :
+  • Bot Telegram     (thread principal — asyncio + signaux)
+  • Dashboard Flask  (daemon thread   — port exposé par Render)
+  • Scraper restos   (daemon thread   — toutes les 24h)
+
+Toutes les données lues/écrites dans DATA_DIR (= /data sur Render).
 """
 from __future__ import annotations
 import threading, os, sys, time
 from pathlib import Path
 
-# Charge .env si présent
+# ── Variables d'environnement ────────────────────────────
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent / ".env")
@@ -14,44 +20,24 @@ except ImportError:
     pass
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
-PORT     = int(os.environ.get("PORT", 10000))
+PORT     = int(os.environ.get("PORT", 5001))   # Render injecte PORT automatiquement
 
-from http.server import HTTPServer, BaseHTTPRequestHandler
+print(f"[start] DATA_DIR = {DATA_DIR or '(répertoire courant)'}", flush=True)
+print(f"[start] PORT     = {PORT}", flush=True)
 
-# ── État de santé du bot ──────────────────────────────────
-_bot_alive  = False
-_bot_error  = ""
+# ── Dashboard Flask (daemon thread) ──────────────────────
+def run_dashboard():
+    try:
+        import dashboard
+        dashboard._reload_accounts()
+        dashboard._auto_gen["enabled"] = True
+        dashboard._schedule_next()
+        print(f"[DASH] 🛵 Dashboard → http://0.0.0.0:{PORT}", flush=True)
+        dashboard.app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+    except Exception as e:
+        print(f"[DASH] ❌ Erreur dashboard : {e}", flush=True)
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            code = 200 if _bot_alive else 503
-            body = b"OK" if _bot_alive else f"Bot KO: {_bot_error}".encode()
-        else:
-            code, body = 200, b"GrabDiscount Bot OK"
-        self.send_response(code)
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *args):
-        pass
-
-# ── Bot avec surveillance ────────────────────────────────
-def run_bot():
-    global _bot_alive, _bot_error
-    while True:   # relance auto si crash
-        try:
-            import bot
-            _bot_alive = True
-            _bot_error = ""
-            print("[BOT] ✅ Démarré", flush=True)
-            bot.main()
-        except Exception as e:
-            _bot_alive = False
-            _bot_error = str(e)
-            print(f"[BOT] ❌ Crash : {e} — relance dans 10s", flush=True)
-            time.sleep(10)
-
-# ── Restaurant scraper (toutes les 24h) ─────────────────
+# ── Scraper restaurants (daemon thread — toutes les 24h) ─
 def run_restaurant_scraper():
     try:
         import restaurant_scraper, schedule, time as t
@@ -64,12 +50,20 @@ def run_restaurant_scraper():
     except Exception as e:
         print(f"[RESTAURANTS] Erreur : {e}", flush=True)
 
-# ── Lancement ────────────────────────────────────────────
-print(f"[start] HTTP health check sur port {PORT}", flush=True)
-
-threading.Thread(target=run_bot,                daemon=True).start()
+# ── Démarrer les threads daemon ───────────────────────────
+threading.Thread(target=run_dashboard,          daemon=True).start()
 threading.Thread(target=run_restaurant_scraper, daemon=True).start()
 
-server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-print("[start] Serveur HTTP démarré", flush=True)
-server.serve_forever()
+# Petit délai pour que le dashboard soit prêt avant que Render check /health
+time.sleep(2)
+
+# ── Bot Telegram dans le thread principal ─────────────────
+# (python-telegram-bot v21 a besoin du thread principal pour asyncio + signaux)
+while True:
+    try:
+        import bot
+        print("[BOT] ✅ Démarré", flush=True)
+        bot.main()
+    except Exception as e:
+        print(f"[BOT] ❌ Crash : {e} — relance dans 10s", flush=True)
+        time.sleep(10)
