@@ -1,18 +1,18 @@
 """
 start.py — Point d'entrée unique Render / Raspberry Pi
 =======================================================
-Lance en parallèle :
-  • Bot Telegram     (thread principal — asyncio + signaux)
-  • Dashboard Flask  (daemon thread   — port exposé par Render)
-  • Scraper restos   (daemon thread   — toutes les 24h)
-
-Toutes les données lues/écrites dans DATA_DIR (= /data sur Render).
+Ordre de démarrage optimisé pour Render :
+  1. Health check HTTP minimal → port ouvert en <1s (Render valide)
+  2. Dashboard Flask           → remplace le health check
+  3. Bot Telegram              → thread daemon
+  4. Scraper restaurants       → thread daemon (délai 60s)
 """
 from __future__ import annotations
 import threading, os, sys, time
 from pathlib import Path
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ── Variables d'environnement ────────────────────────────
+# ── Variables d'environnement ─────────────────────────────
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent / ".env")
@@ -20,28 +20,66 @@ except ImportError:
     pass
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
-PORT     = int(os.environ.get("PORT", 5001))   # Render injecte PORT automatiquement
+PORT     = int(os.environ.get("PORT", 5001))
 
 print(f"[start] DATA_DIR = {DATA_DIR or '(répertoire courant)'}", flush=True)
 print(f"[start] PORT     = {PORT}", flush=True)
 
-# ── Dashboard Flask (daemon thread) ──────────────────────
-def run_dashboard():
-    try:
-        import dashboard
-        dashboard._reload_accounts()
-        dashboard._auto_gen["enabled"] = True
-        dashboard._schedule_next()
-        print(f"[DASH] 🛵 Dashboard → http://0.0.0.0:{PORT}", flush=True)
-        dashboard.app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
-    except Exception as e:
-        print(f"[DASH] ❌ Erreur dashboard : {e}", flush=True)
+# ── 1. Health check minimal (ouvre le port instantanément) ──
+# Render exige que le port réponde rapidement — ce mini serveur
+# répond "OK" pendant que Flask charge en arrière-plan.
+_flask_ready = False
 
-# ── Scraper restaurants (daemon thread — toutes les 24h) ─
+class QuickHealth(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"OK"
+        self.send_response(200)
+        self.send_header("Content-Length", len(body))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
+
+_health_server = HTTPServer(("0.0.0.0", PORT), QuickHealth)
+_health_thread = threading.Thread(target=_health_server.serve_forever, daemon=True)
+_health_thread.start()
+print(f"[start] ✅ Port {PORT} ouvert (health check)", flush=True)
+
+# ── 2. Bot Telegram (daemon thread) ──────────────────────
+def run_bot():
+    import asyncio
+    while True:
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            import bot
+            print("[BOT] ✅ Démarré", flush=True)
+            loop.run_until_complete(_run_bot_async())
+        except Exception as e:
+            print(f"[BOT] ❌ Crash : {e} — relance dans 10s", flush=True)
+            time.sleep(10)
+
+async def _run_bot_async():
+    import bot
+    await bot.main_async() if hasattr(bot, 'main_async') else None
+
+def run_bot_simple():
+    while True:
+        try:
+            import importlib
+            import bot as _bot
+            importlib.reload(_bot)
+            print("[BOT] ✅ Démarré", flush=True)
+            _bot.main()
+        except Exception as e:
+            print(f"[BOT] ❌ Crash : {e} — relance dans 10s", flush=True)
+            time.sleep(10)
+
+# ── 3. Scraper (daemon thread — démarre après 60s) ────────
 def run_restaurant_scraper():
+    time.sleep(60)   # laisse le temps à Flask + Bot de démarrer
     try:
         import restaurant_scraper, schedule, time as t
-        print("[RESTAURANTS] Premier scan au démarrage…", flush=True)
+        print("[RESTAURANTS] Scan au démarrage…", flush=True)
         restaurant_scraper.run_once()
         schedule.every(24).hours.do(restaurant_scraper.run_once)
         while True:
@@ -50,20 +88,25 @@ def run_restaurant_scraper():
     except Exception as e:
         print(f"[RESTAURANTS] Erreur : {e}", flush=True)
 
-# ── Démarrer les threads daemon ───────────────────────────
-threading.Thread(target=run_dashboard,          daemon=True).start()
-threading.Thread(target=run_restaurant_scraper, daemon=True).start()
-
-# Petit délai pour que le dashboard soit prêt avant que Render check /health
-time.sleep(2)
-
-# ── Bot Telegram dans le thread principal ─────────────────
-# (python-telegram-bot v21 a besoin du thread principal pour asyncio + signaux)
-while True:
+# ── 4. Dashboard Flask (thread principal) ─────────────────
+def run_dashboard():
+    global _flask_ready
     try:
-        import bot
-        print("[BOT] ✅ Démarré", flush=True)
-        bot.main()
+        import dashboard
+        dashboard._reload_accounts()
+        dashboard._auto_gen["enabled"] = True
+        dashboard._schedule_next()
+        # Arrêt du health check minimal → Flask prend le relais
+        _health_server.shutdown()
+        print(f"[DASH] 🛵 Dashboard démarré sur port {PORT}", flush=True)
+        _flask_ready = True
+        dashboard.app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
     except Exception as e:
-        print(f"[BOT] ❌ Crash : {e} — relance dans 10s", flush=True)
-        time.sleep(10)
+        print(f"[DASH] ❌ Erreur : {e}", flush=True)
+
+# ── Lancement des threads ─────────────────────────────────
+threading.Thread(target=run_bot_simple,           daemon=True).start()
+threading.Thread(target=run_restaurant_scraper,   daemon=True).start()
+
+# Dashboard dans le thread principal (Flask bloque ici)
+run_dashboard()
