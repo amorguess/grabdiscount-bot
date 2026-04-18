@@ -1299,6 +1299,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 /* TABLE */
 .table-wrap{background:var(--s2);border:1px solid var(--s3);border-radius:14px;overflow:hidden}
+.table-wrap table{display:block;max-height:520px;overflow-y:auto}
 .table-header{padding:16px 20px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:12px}
 .table-title{font-size:.9rem;font-weight:700}
 table{width:100%;border-collapse:collapse}
