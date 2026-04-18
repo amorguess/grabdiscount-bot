@@ -221,6 +221,18 @@ def _schedule_next():
     _auto_timer.daemon = True
     _auto_timer.start()
 
+def _schedule_immediate(delay_min: int = 5):
+    """Lance une génération dans `delay_min` minutes (utilisé au démarrage)."""
+    global _auto_timer
+    if _auto_timer:
+        _auto_timer.cancel()
+    delay_s = delay_min * 60
+    next_dt = datetime.datetime.now() + datetime.timedelta(seconds=delay_s)
+    _auto_gen["next_run"] = next_dt.isoformat()
+    _auto_timer = threading.Timer(delay_s, _run_auto_gen)
+    _auto_timer.daemon = True
+    _auto_timer.start()
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     err = ""
@@ -1284,8 +1296,9 @@ def employe_login():
     pwd = request.form.get("pwd", "")
     if pwd == EMPLOYEE_PWD:
         session["role"] = "employee"
-        import secrets as _sec
-        session["employe_id"] = "employe_" + _sec.token_hex(4)
+        import hashlib as _hl
+        # ID stable = hash du mot de passe (même ID après reconnexion)
+        session["employe_id"] = "emp_" + _hl.sha256(EMPLOYEE_PWD.encode()).hexdigest()[:16]
         return redirect("/employe")
     return render_template_string(EMPLOYE_LOGIN, err="Mot de passe incorrect")
 
@@ -1854,7 +1867,7 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
   </div>
 
   <!-- ACCOUNTS -->
-  <div id="page-accounts" style="display:none">
+  <div id="page-accounts" style="display:none;flex-direction:column;height:100%;overflow:hidden">
     <div class="topbar">
       <span class="page-title">🏭 Usine Grab — Packs Identité</span>
       <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
@@ -1862,7 +1875,7 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
         <span style="font-size:.75rem;color:var(--t3);background:var(--s2);padding:6px 10px;border-radius:8px" title="Nécessite un téléphone Android branché — non disponible sur VPS">📱 Usine Android : non dispo sur VPS</span>
       </div>
     </div>
-    <div class="content">
+    <div class="content" style="flex:1;overflow-y:auto">
 
       <!-- 3 compteurs top -->
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
@@ -2094,7 +2107,7 @@ function nav(p){
   });
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
   if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList();}
-  if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadPacks(); loadAutoGen(); orchStartPolling();}
+  if(p==='accounts'){document.getElementById('page-accounts').style.display='flex'; loadPacks(); loadAutoGen(); orchStartPolling();}
   // Scroll top on mobile
   window.scrollTo(0,0);
   _page=p;

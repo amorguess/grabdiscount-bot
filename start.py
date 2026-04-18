@@ -100,7 +100,8 @@ def run_dashboard():
         import dashboard
         dashboard._reload_accounts()
         dashboard._auto_gen["enabled"] = True
-        dashboard._schedule_next()
+        # Lance une génération dans 5 min (au démarrage), puis toutes les 65 min
+        dashboard._schedule_immediate(delay_min=5)
         # Arrêt du health check minimal → Flask prend le relais
         _health_server.shutdown()
         _health_server.server_close()  # libère le socket immédiatement
