@@ -1265,7 +1265,7 @@ showSkeletons(6); // immediate skeleton while JSON loads
 const _cachedRestos = localStorage.getItem('grab_restos_cache');
 const _cachedTs = localStorage.getItem('grab_restos_ts');
 if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000){
-  ALL_RESTAURANTS = JSON.parse(_cachedRestos);
+  try{ ALL_RESTAURANTS = JSON.parse(_cachedRestos); }catch(e){ ALL_RESTAURANTS=[]; }
   buildRestos();
   setupScrollObserver();
 } else {
@@ -1273,8 +1273,10 @@ if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000)
     .then(r=>r.json())
     .then(data=>{
       ALL_RESTAURANTS = data.restaurants || [];
-      localStorage.setItem('grab_restos_cache', JSON.stringify(data.restaurants));
-      localStorage.setItem('grab_restos_ts', Date.now());
+      try{
+        localStorage.setItem('grab_restos_cache', JSON.stringify(data.restaurants));
+        localStorage.setItem('grab_restos_ts', Date.now());
+      }catch(e){ /* quota dépassé — cache ignoré, données en mémoire */ }
       buildRestos();
       setupScrollObserver();
     })
