@@ -63,19 +63,21 @@ async def _run_bot_async():
     await bot.main_async() if hasattr(bot, 'main_async') else None
 
 def run_bot_simple():
+    """Lance le bot comme un sous-processus indépendant — évite les conflits asyncio/thread."""
+    import subprocess, sys
+    bot_script = Path(__file__).parent / "bot.py"
     while True:
         try:
-            import asyncio, importlib
-            import bot as _bot
-            importlib.reload(_bot)
-            # Créer un event loop dédié pour ce thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            print("[BOT] ✅ Démarré", flush=True)
-            _bot.main()
+            print("[BOT] ✅ Démarré (subprocess)", flush=True)
+            proc = subprocess.Popen(
+                [sys.executable, str(bot_script)],
+                cwd=str(Path(__file__).parent)
+            )
+            proc.wait()
+            print(f"[BOT] ❌ Process terminé (code {proc.returncode}) — relance dans 10s", flush=True)
         except Exception as e:
-            print(f"[BOT] ❌ Crash : {e} — relance dans 10s", flush=True)
-            time.sleep(10)
+            print(f"[BOT] ❌ Erreur : {e} — relance dans 10s", flush=True)
+        time.sleep(10)
 
 # ── 3. Scraper (daemon thread — démarre après 60s) ────────
 def run_restaurant_scraper():
