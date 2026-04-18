@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
 BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID      = int(os.environ.get("ADMIN_CHAT_ID", 0))
 DASHBOARD_PWD = os.environ.get("DASHBOARD_PASSWORD", "grabadmin2024")  # fallback si env var absente
+EMPLOYEE_PWD  = os.environ.get("EMPLOYEE_PASSWORD", "employe2024")     # mot de passe espace employé
 
 # ── Verrou I/O pour éviter les race conditions ─────────────
 _io_lock = threading.Lock()
@@ -147,6 +148,14 @@ def auth(f):
     @functools.wraps(f)
     def wrap(*a, **kw):
         if not session.get("ok"): return redirect("/login")
+        return f(*a, **kw)
+    return wrap
+
+def emp_auth(f):
+    """Décorateur auth pour l'espace employé."""
+    @functools.wraps(f)
+    def wrap(*a, **kw):
+        if session.get("role") != "employee": return redirect("/employe")
         return f(*a, **kw)
     return wrap
 
@@ -1124,6 +1133,341 @@ def api_order_tracking():
         orders[oid]["statut"] = "en_cours"
         wj(ORDERS_F, orders)
     return jsonify({"ok":ok})
+
+# ─────────────────────────────────────────────────────────────
+#  ICLOUD MAIL READER
+# ─────────────────────────────────────────────────────────────
+
+def _read_icloud_mails(hme_address: str, max_count: int = 10) -> list:
+    """
+    Lit les derniers mails reçus sur une adresse Hide My Email iCloud.
+    Utilise le cookie iCloud existant dans icloud_gen/cookie.txt
+    """
+    cookie_path = _CODE_DIR / "icloud_gen" / "cookie.txt"
+    try:
+        cookie_txt = cookie_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return [{"error": f"Cookie introuvable : {e}"}]
+
+    # Parse cookie.txt → dict
+    cookies: dict = {}
+    for line in cookie_txt.splitlines():
+        line = line.strip()
+        if not line or line.startswith("//") or line.startswith("#"):
+            continue
+        for part in line.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, _, v = part.partition("=")
+                cookies[k.strip()] = v.strip()
+
+    if not cookies:
+        return [{"error": "Cookie vide ou invalide"}]
+
+    # Construire la string Cookie pour HTTP
+    cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+
+    try:
+        # Découvrir les endpoints iCloud mail disponibles
+        headers = {
+            "Cookie": cookie_str,
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Origin": "https://www.icloud.com",
+            "Referer": "https://www.icloud.com/",
+        }
+
+        # Essayer l'API mail iCloud
+        urls_to_try = [
+            "https://p66-mailws.icloud.com/wm/mbox",
+            "https://p65-mailws.icloud.com/wm/mbox",
+            "https://p64-mailws.icloud.com/wm/mbox",
+            "https://p63-mailws.icloud.com/wm/mbox",
+        ]
+
+        # D'abord, chercher le bon endpoint depuis le cookie (dsid)
+        dsid = cookies.get("dsid") or cookies.get("X-Apple-ID-Session-Id") or ""
+        apple_id_token = cookies.get("X-Apple-Web-Auth-Token") or cookies.get("x-apple-web-auth-token") or ""
+
+        # Tenter de récupérer les infos de compte pour trouver le bon mailws
+        try:
+            setup_r = requests.get(
+                "https://setup.icloud.com/setup/ws/1/accountLogin",
+                headers={**headers, "Content-Type": "application/json"},
+                timeout=8,
+            )
+            if setup_r.status_code == 200:
+                sdata = setup_r.json()
+                mail_url = sdata.get("webservices", {}).get("mail", {}).get("url", "")
+                if mail_url:
+                    urls_to_try = [mail_url + "/wm/mbox"] + urls_to_try
+        except Exception:
+            pass
+
+        mails = []
+        last_error = None
+        for base_url in urls_to_try:
+            try:
+                # Récupérer la liste des messages dans INBOX
+                list_r = requests.get(
+                    base_url,
+                    params={"limit": max_count * 2, "offset": 0},
+                    headers={**headers, "Content-Type": "application/json"},
+                    timeout=10,
+                )
+                if list_r.status_code in (401, 403):
+                    last_error = "Cookie expiré (401/403)"
+                    continue
+                if list_r.status_code != 200:
+                    last_error = f"HTTP {list_r.status_code}"
+                    continue
+
+                data = list_r.json()
+                messages = data.get("messages", []) or data.get("items", []) or []
+                if not messages:
+                    # Essayer format différent
+                    messages = data if isinstance(data, list) else []
+
+                for msg in messages[:max_count * 2]:
+                    to_field = msg.get("to", []) or []
+                    if isinstance(to_field, str):
+                        to_field = [to_field]
+                    to_emails = [t.get("email", t) if isinstance(t, dict) else t for t in to_field]
+                    # Vérifier si ce message concerne notre adresse HME (ou inclure tout)
+                    subject = msg.get("subject", "") or ""
+                    from_field = msg.get("from", {}) or {}
+                    from_email = from_field.get("email", "") if isinstance(from_field, dict) else str(from_field)
+                    from_name = from_field.get("name", "") if isinstance(from_field, dict) else ""
+                    date_str = msg.get("date", "") or msg.get("received", "") or ""
+                    body = msg.get("preview", "") or msg.get("body", "") or ""
+
+                    s_lower = subject.lower() + body.lower() + from_email.lower()
+                    is_grab = any(kw in s_lower for kw in ["grab", "verification", "verify", "code", "otp"])
+
+                    mails.append({
+                        "from": f"{from_name} <{from_email}>" if from_name else from_email,
+                        "to": ", ".join(to_emails),
+                        "subject": subject,
+                        "date": date_str,
+                        "preview": body[:200] if body else "",
+                        "is_grab": is_grab,
+                    })
+                if mails:
+                    break
+            except requests.Timeout:
+                last_error = "Timeout"
+                continue
+            except Exception as ex:
+                last_error = str(ex)
+                continue
+
+        if not mails and last_error:
+            return [{"error": last_error or "Impossible de lire les mails (cookie peut-être expiré)"}]
+        return mails[:max_count]
+
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+# ─────────────────────────────────────────────────────────────
+#  ESPACE EMPLOYÉ — ROUTES
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/employe", methods=["GET"])
+def employe_page():
+    if session.get("role") == "employee":
+        return render_template_string(EMPLOYE_PAGE)
+    return render_template_string(EMPLOYE_LOGIN, err="")
+
+@app.route("/employe/login", methods=["POST"])
+def employe_login():
+    pwd = request.form.get("pwd", "")
+    if pwd == EMPLOYEE_PWD:
+        session["role"] = "employee"
+        import secrets as _sec
+        session["employe_id"] = "employe_" + _sec.token_hex(4)
+        return redirect("/employe")
+    return render_template_string(EMPLOYE_LOGIN, err="Mot de passe incorrect")
+
+@app.route("/employe/logout")
+def employe_logout():
+    session.pop("role", None)
+    session.pop("employe_id", None)
+    return redirect("/employe")
+
+@app.route("/api/employe/accounts")
+@emp_auth
+def api_employe_accounts():
+    """Retourne les comptes disponibles + ceux pris en charge par cet employé."""
+    import sys as _sys
+    _sys.path.insert(0, str(_CODE_DIR))
+    try:
+        from identity_gen import generate_identity, get_bangkok_address
+    except ImportError:
+        generate_identity = None
+        get_bangkok_address = None
+
+    employe_id = session.get("employe_id", "")
+    accounts = rj(ACCOUNTS_F, [])
+    result = []
+    for a in accounts:
+        status = a.get("status", "available")
+        claimed_by = a.get("claimed_by")
+        # Montrer : disponibles + ceux pris en charge par cet employé
+        if status in ("available",) and not claimed_by:
+            pass  # inclure
+        elif claimed_by == employe_id:
+            pass  # inclure
+        else:
+            continue
+
+        email = a.get("email", "")
+        if not email:
+            continue
+
+        try:
+            ident = generate_identity(seed=email) if generate_identity else {}
+            addr = get_bangkok_address(seed=email) if get_bangkok_address else ""
+        except Exception:
+            ident = {"prenom": "?", "nom": "?", "full_name": "?"}
+            addr = ""
+
+        result.append({
+            "email": email,
+            "status": status,
+            "claimed_by": claimed_by,
+            "claimed_at": a.get("claimed_at"),
+            "prenom": a.get("grab_prenom") or ident.get("prenom", ""),
+            "nom": a.get("grab_nom") or ident.get("nom", ""),
+            "full_name": a.get("grab_name") or ident.get("full_name", ""),
+            "bangkok_addr": a.get("grab_bangkok_addr") or addr,
+            "password": "114722165uLCL",
+            "phone": a.get("grab_phone", ""),
+            "created_at": a.get("created", ""),
+        })
+    return jsonify({"ok": True, "accounts": result})
+
+@app.route("/api/employe/claim", methods=["POST"])
+@emp_auth
+def api_employe_claim():
+    """Verrouille un compte pour cet employé."""
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "email requis"})
+    employe_id = session.get("employe_id", "")
+    accounts = rj(ACCOUNTS_F, [])
+    for a in accounts:
+        if a.get("email") == email:
+            if a.get("claimed_by") and a.get("claimed_by") != employe_id:
+                return jsonify({"ok": False, "error": "Compte déjà pris en charge par un autre employé"})
+            a["claimed_by"] = employe_id
+            a["claimed_at"] = datetime.datetime.now().isoformat()
+            a["status"] = "claimed"
+            wj(ACCOUNTS_F, accounts)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Compte non trouvé"})
+
+@app.route("/api/employe/unclaim", methods=["POST"])
+@emp_auth
+def api_employe_unclaim():
+    """Libère un compte verrouillé par cet employé."""
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "email requis"})
+    employe_id = session.get("employe_id", "")
+    accounts = rj(ACCOUNTS_F, [])
+    for a in accounts:
+        if a.get("email") == email:
+            if a.get("claimed_by") != employe_id:
+                return jsonify({"ok": False, "error": "Ce compte n'est pas le vôtre"})
+            a["claimed_by"] = None
+            a["claimed_at"] = None
+            a["status"] = "available"
+            wj(ACCOUNTS_F, accounts)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Compte non trouvé"})
+
+@app.route("/api/employe/set_phone", methods=["POST"])
+@emp_auth
+def api_employe_set_phone():
+    """Enregistre un numéro de téléphone pour un compte pris en charge."""
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip()
+    phone = (d.get("phone") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "email requis"})
+    employe_id = session.get("employe_id", "")
+    accounts = rj(ACCOUNTS_F, [])
+    for a in accounts:
+        if a.get("email") == email:
+            if a.get("claimed_by") != employe_id:
+                return jsonify({"ok": False, "error": "Ce compte n'est pas le vôtre"})
+            a["grab_phone"] = phone
+            wj(ACCOUNTS_F, accounts)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Compte non trouvé"})
+
+@app.route("/api/employe/validate", methods=["POST"])
+@emp_auth
+def api_employe_validate():
+    """Valide un compte comme 'full' une fois le numéro entré et le compte créé."""
+    import sys as _sys
+    _sys.path.insert(0, str(_CODE_DIR))
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "email requis"})
+    employe_id = session.get("employe_id", "")
+
+    try:
+        from identity_gen import generate_identity, get_bangkok_address
+        ident = generate_identity(seed=email)
+        addr = get_bangkok_address(seed=email)
+    except Exception:
+        ident = {"full_name": "?", "prenom": "?", "nom": "?"}
+        addr = ""
+
+    accounts = rj(ACCOUNTS_F, [])
+    for a in accounts:
+        if a.get("email") == email:
+            if a.get("claimed_by") != employe_id:
+                return jsonify({"ok": False, "error": "Ce compte n'est pas le vôtre"})
+            if not a.get("grab_phone"):
+                return jsonify({"ok": False, "error": "Numéro de téléphone manquant"})
+            a["status"] = "grab_ready"
+            a["claimed_by"] = None
+            a["claimed_at"] = None
+            a["grab_created"] = datetime.datetime.now().isoformat()
+            a["grab_password"] = "114722165uLCL"
+            a["grab_name"] = ident.get("full_name", "")
+            a["grab_prenom"] = ident.get("prenom", "")
+            a["grab_nom"] = ident.get("nom", "")
+            a["grab_bangkok_addr"] = addr
+            a["validated_by_employee"] = employe_id
+            wj(ACCOUNTS_F, accounts)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Compte non trouvé"})
+
+@app.route("/api/employe/mails/<path:email_address>")
+@emp_auth
+def api_employe_mails(email_address):
+    """Lit les derniers mails iCloud pour l'adresse donnée."""
+    employe_id = session.get("employe_id", "")
+    # Vérifier que cet employé a bien ce compte en charge
+    accounts = rj(ACCOUNTS_F, [])
+    acc = next((a for a in accounts if a.get("email") == email_address), None)
+    if not acc:
+        return jsonify({"ok": False, "error": "Compte non trouvé", "mails": []})
+    if acc.get("claimed_by") != employe_id:
+        return jsonify({"ok": False, "error": "Accès refusé", "mails": []})
+    mails = _read_icloud_mails(email_address, max_count=10)
+    # Si la liste contient un dict avec une clé "error", c'est une erreur
+    if mails and "error" in mails[0]:
+        return jsonify({"ok": False, "error": mails[0]["error"], "mails": []})
+    return jsonify({"ok": True, "mails": mails})
+
 
 # ── MAIN PAGE ─────────────────────────────────────────────
 @app.route("/")
@@ -2464,6 +2808,502 @@ async function refreshAll(){
 refreshAll();
 setInterval(refresh, 15000);
 setInterval(()=>Promise.all([loadDispo(),loadBotStatus(),loadRestoCount()]), 30000);
+</script>
+</body>
+</html>"""
+
+EMPLOYE_LOGIN = """<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GrabDiscount — Espace Employé</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#080b12;--s2:#111827;--s3:#1f2937;--green:#00b14f;--red:#ef4444;--t1:#f9fafb;--t3:#6b7280}
+body{background:var(--bg);display:flex;align-items:center;justify-content:center;min-height:100vh;
+font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.box{background:var(--s2);border:1px solid var(--s3);border-radius:20px;padding:48px 40px;width:380px;text-align:center}
+.logo{font-size:3.5rem;margin-bottom:16px}
+h1{color:var(--t1);font-size:1.4rem;font-weight:700;margin-bottom:4px}
+.sub{color:var(--t3);font-size:.875rem;margin-bottom:32px}
+input{width:100%;background:#0d1117;border:1px solid var(--s3);border-radius:12px;padding:14px 16px;
+color:var(--t1);font-size:1rem;outline:none;margin-bottom:12px;transition:.2s}
+input:focus{border-color:var(--green);box-shadow:0 0 0 3px #00b14f15}
+button{width:100%;background:var(--green);border:none;border-radius:12px;padding:14px;color:#fff;
+font-size:1rem;font-weight:700;cursor:pointer;transition:.2s}
+button:hover{background:#009940}
+.err{color:var(--red);font-size:.85rem;margin-bottom:12px;background:#7f1d1d22;border:1px solid #7f1d1d44;
+border-radius:8px;padding:10px}
+</style></head><body>
+<div class="box">
+  <div class="logo">🛵</div>
+  <h1>GrabDiscount</h1>
+  <div class="sub">Espace Employé — Création de comptes</div>
+  {% if err %}<div class="err">{{ err }}</div>{% endif %}
+  <form method="POST" action="/employe/login">
+    <input type="password" name="pwd" placeholder="Mot de passe employé" autofocus>
+    <button>Accéder →</button>
+  </form>
+</div>
+</body></html>"""
+
+EMPLOYE_PAGE = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GrabDiscount — Espace Employé</title>
+<style>
+:root{--bg:#080b12;--s1:#0d1117;--s2:#111827;--s3:#1f2937;--s4:#374151;
+  --t1:#f9fafb;--t2:#9ca3af;--t3:#6b7280;--green:#00b14f;--blue:#3b82f6;
+  --orange:#f59e0b;--red:#ef4444;--purple:#8b5cf6;--cyan:#06b6d4}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--t1);min-height:100vh}
+.header{background:var(--s1);border-bottom:1px solid var(--s3);padding:14px 24px;
+  display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100}
+.header-brand{display:flex;align-items:center;gap:10px;flex:1}
+.header-logo{font-size:1.5rem}
+.header-title{font-size:1rem;font-weight:800}
+.header-sub{font-size:.7rem;color:var(--t3)}
+.btn-logout{padding:7px 14px;border-radius:8px;border:1px solid var(--s3);background:none;
+  color:var(--t3);cursor:pointer;font-size:.8rem;transition:.15s;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn-logout:hover{color:var(--red);border-color:var(--red)}
+.content{padding:24px;max-width:1200px;margin:0 auto}
+.filter-bar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.filter-pill{padding:6px 14px;border-radius:99px;font-size:.8rem;cursor:pointer;
+  border:1px solid var(--s3);background:var(--s2);color:var(--t2);transition:.15s}
+.filter-pill:hover,.filter-pill.active{background:var(--green);color:#fff;border-color:var(--green)}
+.table-wrap{background:var(--s2);border:1px solid var(--s3);border-radius:14px;overflow:hidden}
+.table-header{padding:14px 20px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:12px}
+.table-title{font-size:.9rem;font-weight:700}
+table{width:100%;border-collapse:collapse}
+th{font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:var(--t3);
+   padding:10px 14px;text-align:left;border-bottom:1px solid var(--s3);background:var(--s1)}
+td{padding:12px 14px;border-bottom:1px solid #0d111780;font-size:.84rem;color:var(--t2);vertical-align:top}
+tr:last-child td{border:none}
+.mono{font-family:monospace;font-size:.78rem}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:99px;
+  font-size:.7rem;font-weight:600;white-space:nowrap}
+.pill-green{background:#00b14f18;color:var(--green)}
+.pill-orange{background:#f59e0b18;color:var(--orange)}
+.pill-blue{background:#3b82f618;color:var(--blue)}
+.pill-gray{background:var(--s3);color:var(--t3)}
+.btn{padding:6px 13px;border-radius:7px;border:none;font-size:.78rem;font-weight:600;
+  cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:5px}
+.btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-primary{background:var(--green);color:#fff}
+.btn-secondary{background:var(--s3);color:var(--t1)}
+.btn-blue{background:var(--blue);color:#fff}
+.btn-danger{background:#ef444420;color:var(--red);border:1px solid #ef444430}
+.btn-sm{padding:4px 10px;font-size:.72rem}
+.input{background:var(--s1);border:1px solid var(--s3);border-radius:7px;padding:7px 11px;
+  color:var(--t1);font-size:.82rem;outline:none;transition:.2s}
+.input:focus{border-color:var(--green)}
+.input::placeholder{color:var(--t3)}
+/* SLIDE PANEL */
+.slide-overlay{position:fixed;inset:0;background:#00000080;z-index:200;opacity:0;pointer-events:none;transition:.2s}
+.slide-overlay.open{opacity:1;pointer-events:all}
+.slide-panel{position:fixed;right:0;top:0;bottom:0;width:500px;background:var(--s1);
+  border-left:1px solid var(--s3);z-index:201;transform:translateX(100%);transition:.25s;overflow-y:auto;
+  display:flex;flex-direction:column}
+.slide-panel.open{transform:translateX(0)}
+.slide-header{padding:18px 22px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.slide-body{padding:20px;flex:1;overflow-y:auto}
+.slide-section{background:var(--s2);border-radius:12px;padding:14px;margin-bottom:12px}
+.slide-section h4{font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:var(--t3);margin-bottom:10px}
+/* TOAST */
+.toast-wrap{position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--s2);border:1px solid var(--s3);border-radius:10px;padding:12px 18px;
+  font-size:.84rem;min-width:200px;transform:translateX(120%);transition:.3s;box-shadow:0 6px 20px #00000060}
+.toast.show{transform:translateX(0)}
+.toast.ok{border-color:#00b14f60;color:var(--green)}
+.toast.err{border-color:#ef444460;color:var(--red)}
+/* MAIL PANEL */
+.mail-item{background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:12px;margin-bottom:8px}
+.mail-item.grab{border-color:#00b14f40;background:#00b14f08}
+.mail-from{font-size:.78rem;color:var(--t3);margin-bottom:2px}
+.mail-subject{font-size:.86rem;font-weight:600;color:var(--t1);margin-bottom:4px}
+.mail-preview{font-size:.76rem;color:var(--t2);line-height:1.4}
+.mail-date{font-size:.7rem;color:var(--t3);margin-top:4px}
+.empty{text-align:center;padding:40px 20px;color:var(--t3)}
+.loading{text-align:center;padding:20px;color:var(--t3);font-size:.85rem}
+@media(max-width:768px){
+  .content{padding:12px}
+  .slide-panel{width:100%}
+  table{display:block;overflow-x:auto}
+  th,td{white-space:nowrap}
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-brand">
+    <span class="header-logo">🛵</span>
+    <div>
+      <div class="header-title">GrabDiscount</div>
+      <div class="header-sub">Espace Employé</div>
+    </div>
+  </div>
+  <a href="/employe/logout" class="btn-logout">🚪 Déconnexion</a>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="content">
+  <div style="margin-bottom:16px">
+    <div style="font-size:1.1rem;font-weight:700;margin-bottom:4px">Comptes à créer</div>
+    <div style="font-size:.82rem;color:var(--t3)">Prenez un compte en charge, entrez le numéro SMSPool, créez le compte Grab, validez.</div>
+  </div>
+
+  <!-- Filtres -->
+  <div class="filter-bar">
+    <span class="filter-pill active" onclick="setFilter(this,'all')">Tous mes comptes</span>
+    <span class="filter-pill" onclick="setFilter(this,'available')">📧 Disponibles</span>
+    <span class="filter-pill" onclick="setFilter(this,'claimed')">🔒 Mes comptes en cours</span>
+  </div>
+
+  <!-- Tableau -->
+  <div class="table-wrap">
+    <div class="table-header">
+      <span class="table-title">📦 Comptes disponibles</span>
+      <span class="pill pill-blue" id="countBadge" style="margin-left:8px">0</span>
+      <button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="loadAccounts()">🔄 Actualiser</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Email iCloud</th>
+          <th>Identité + MDP</th>
+          <th>Adresse Bangkok</th>
+          <th>Statut</th>
+          <th style="width:180px">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="accountsTable">
+        <tr><td colspan="5" class="loading">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top:14px;font-size:.76rem;color:var(--t3);text-align:right">
+    Mot de passe Grab par défaut : <span class="mono" style="color:var(--t2)">114722165uLCL</span>
+  </div>
+</div>
+
+<!-- SLIDE PANEL — Gestion compte -->
+<div class="slide-overlay" id="slideOverlay" onclick="closePanel()"></div>
+<div class="slide-panel" id="slidePanel">
+  <div class="slide-header">
+    <div style="flex:1">
+      <div class="mono" style="color:var(--purple);font-weight:700;font-size:.9rem" id="spEmail">—</div>
+      <div style="font-size:.73rem;color:var(--t3);margin-top:2px" id="spName">—</div>
+    </div>
+    <span id="spStatusPill"></span>
+    <button class="btn btn-secondary btn-sm" onclick="closePanel()">✕</button>
+  </div>
+  <div class="slide-body" id="slideBody">
+    <!-- rempli dynamiquement -->
+  </div>
+</div>
+
+<!-- MAIL PANEL (modal) -->
+<div class="slide-overlay" id="mailOverlay" onclick="closeMails()"></div>
+<div class="slide-panel" id="mailPanel" style="width:480px">
+  <div class="slide-header">
+    <div style="flex:1">
+      <div style="font-weight:700">📧 Mails iCloud</div>
+      <div class="mono" style="font-size:.75rem;color:var(--t3)" id="mailForEmail">—</div>
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="refreshMails()">🔄</button>
+    <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="closeMails()">✕</button>
+  </div>
+  <div class="slide-body" id="mailBody">
+    <div class="loading">Chargement des mails…</div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+// ── STATE ────────────────────────────────────────────────
+let _accounts = [];
+let _filter = 'all';
+let _currentEmail = null;
+let _mailEmail = null;
+
+// ── UTILS ────────────────────────────────────────────────
+function $(id){ return document.getElementById(id); }
+function escHtml(t){ return (t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+let _tid = 0;
+function toast(msg, ok=true){
+  const id = 't'+(++_tid);
+  const d = $('toastWrap');
+  d.insertAdjacentHTML('beforeend', `<div class="toast ${ok?'ok':'err'}" id="${id}">${msg}</div>`);
+  setTimeout(()=>document.getElementById(id)?.classList.add('show'), 10);
+  setTimeout(()=>{ const el=document.getElementById(id); if(el){el.classList.remove('show');setTimeout(()=>el.remove(),300);} }, 3500);
+}
+
+function statusPill(status){
+  const m = {
+    'available': '<span class="pill pill-orange">📧 Disponible</span>',
+    'claimed':   '<span class="pill pill-blue">🔒 En cours</span>',
+    'full':      '<span class="pill pill-green">✅ Full</span>',
+    'grab_ready':'<span class="pill pill-green">✅ Prêt</span>',
+    'used':      '<span class="pill pill-gray">✓ Utilisé</span>',
+  };
+  return m[status] || `<span class="pill pill-gray">${status}</span>`;
+}
+
+// ── FILTER ───────────────────────────────────────────────
+function setFilter(el, f){
+  document.querySelectorAll('.filter-pill').forEach(p=>p.classList.remove('active'));
+  el.classList.add('active');
+  _filter = f;
+  renderAccounts();
+}
+
+function filteredAccounts(){
+  if(_filter === 'all') return _accounts;
+  return _accounts.filter(a => a.status === _filter);
+}
+
+// ── LOAD ─────────────────────────────────────────────────
+async function loadAccounts(){
+  try{
+    const r = await fetch('/api/employe/accounts');
+    const d = await r.json();
+    if(!d.ok){ toast('Erreur chargement', false); return; }
+    _accounts = d.accounts || [];
+    renderAccounts();
+  } catch(e){
+    toast('Erreur réseau', false);
+  }
+}
+
+// ── RENDER ───────────────────────────────────────────────
+function renderAccounts(){
+  const tbody = $('accountsTable');
+  if(!tbody) return;
+  const list = filteredAccounts();
+  $('countBadge').textContent = list.length;
+  if(!list.length){
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty">📭 Aucun compte disponible pour le moment</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(a => {
+    const e = escHtml(a.email || '');
+    const name = escHtml(a.full_name || `${a.prenom} ${a.nom}`);
+    const addr = escHtml((a.bangkok_addr || '').slice(0, 55));
+    const addrFull = a.bangkok_addr || '';
+    const isMine = a.claimed_by && a.claimed_by !== null;
+    const hasPhone = !!a.phone;
+
+    let actionBtn = '';
+    if(a.status === 'available'){
+      actionBtn = `<button class="btn btn-primary btn-sm" onclick="claimAccount('${e}')">🤚 Prendre en charge</button>`;
+    } else if(a.status === 'claimed'){
+      actionBtn = `<button class="btn btn-blue btn-sm" onclick="openPanel('${e}')">⚙️ Gérer</button>`;
+    }
+
+    return `<tr>
+      <td>
+        <div class="mono" style="color:var(--purple)">${e}</div>
+        ${a.claimed_at ? `<div style="font-size:.7rem;color:var(--t3);margin-top:2px">Pris le ${escHtml(a.claimed_at.slice(0,10))}</div>` : ''}
+      </td>
+      <td>
+        <div style="font-weight:600;color:var(--t1)">${name}</div>
+        <div style="font-size:.72rem;color:var(--t3)">🔑 <span class="mono">114722165uLCL</span></div>
+        ${hasPhone ? `<div style="font-size:.72rem;color:var(--green);margin-top:2px">📱 ${escHtml(a.phone)}</div>` : ''}
+      </td>
+      <td style="font-size:.74rem;color:var(--t3)" title="${escHtml(addrFull)}">📍 ${addr}${addrFull.length > 55 ? '…' : ''}</td>
+      <td>${statusPill(a.status)}</td>
+      <td>${actionBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── CLAIM ────────────────────────────────────────────────
+async function claimAccount(email){
+  const r = await fetch('/api/employe/claim', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})});
+  const d = await r.json();
+  if(d.ok){ toast('✅ Compte pris en charge !'); await loadAccounts(); openPanel(email); }
+  else toast('❌ ' + (d.error || 'Erreur'), false);
+}
+
+// ── PANEL ────────────────────────────────────────────────
+function openPanel(email){
+  const acc = _accounts.find(a => a.email === email);
+  if(!acc) return;
+  _currentEmail = email;
+  $('spEmail').textContent = email;
+  $('spName').textContent = acc.full_name || `${acc.prenom} ${acc.nom}`;
+  $('spStatusPill').innerHTML = statusPill(acc.status);
+  renderPanel(acc);
+  $('slideOverlay').classList.add('open');
+  $('slidePanel').classList.add('open');
+}
+
+function renderPanel(acc){
+  const email = acc.email || '';
+  const hasPhone = !!acc.phone;
+  $('slideBody').innerHTML = `
+    <!-- Identité -->
+    <div class="slide-section">
+      <h4>👤 Identité</h4>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:.83rem">
+        <div><span style="color:var(--t3)">Nom complet :</span> <span style="color:var(--t1);font-weight:600">${escHtml(acc.full_name||`${acc.prenom} ${acc.nom}`)}</span></div>
+        <div><span style="color:var(--t3)">Adresse :</span> <span style="color:var(--t2);font-size:.78rem">${escHtml(acc.bangkok_addr||'')}</span></div>
+        <div><span style="color:var(--t3)">Mot de passe :</span> <span class="mono" style="color:var(--cyan)">114722165uLCL</span>
+          <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="copyText('114722165uLCL')">📋</button>
+        </div>
+        <div><span style="color:var(--t3)">Email iCloud :</span> <span class="mono" style="color:var(--purple)">${escHtml(email)}</span>
+          <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="copyText('${escHtml(email)}')">📋</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Numéro de téléphone -->
+    <div class="slide-section">
+      <h4>📱 Numéro SMSPool</h4>
+      <div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">
+        Achetez un numéro thaï sur <a href="https://smspool.net" target="_blank" style="color:var(--blue)">smspool.net</a>, entrez-le ici.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="input" id="phoneInput" type="text" placeholder="+66XXXXXXXXX"
+          value="${escHtml(acc.phone||'')}" style="flex:1"
+          onkeydown="if(event.key==='Enter')savePhone()">
+        <button class="btn btn-primary btn-sm" onclick="savePhone()">💾 Enregistrer</button>
+      </div>
+    </div>
+
+    <!-- Mails iCloud -->
+    <div class="slide-section">
+      <h4>📧 Mails iCloud</h4>
+      <div style="font-size:.78rem;color:var(--t3);margin-bottom:10px">
+        Affiche les codes reçus (vérification Grab, OTP, etc.)
+      </div>
+      <button class="btn btn-blue btn-sm" onclick="openMails('${escHtml(email)}')">📧 Voir les mails iCloud</button>
+    </div>
+
+    <!-- Validation -->
+    <div class="slide-section">
+      <h4>✅ Valider le compte</h4>
+      <div style="font-size:.78rem;color:var(--t3);margin-bottom:10px">
+        Une fois le compte Grab créé avec succès, cliquez sur Valider pour marquer ce compte comme prêt.
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" id="validateBtn" onclick="validateAccount()" ${!hasPhone?'disabled':''} style="flex:1">
+          ✅ Valider le compte
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="unclaimAccount()">Libérer</button>
+      </div>
+      ${!hasPhone ? '<div style="font-size:.72rem;color:var(--orange);margin-top:8px">⚠ Entrez d\'abord un numéro de téléphone</div>' : ''}
+    </div>
+  `;
+}
+
+function closePanel(){
+  $('slideOverlay').classList.remove('open');
+  $('slidePanel').classList.remove('open');
+  _currentEmail = null;
+}
+
+// ── PHONE ────────────────────────────────────────────────
+async function savePhone(){
+  const phone = ($('phoneInput')?.value || '').trim();
+  if(!phone){ toast('⚠ Entrez un numéro', false); return; }
+  const r = await fetch('/api/employe/set_phone', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail, phone})});
+  const d = await r.json();
+  if(d.ok){
+    toast('✅ Numéro enregistré !');
+    await loadAccounts();
+    // Rafraîchir le panel
+    const acc = _accounts.find(a => a.email === _currentEmail);
+    if(acc){ acc.phone = phone; renderPanel(acc); }
+    // Activer le bouton valider
+    const vb = $('validateBtn');
+    if(vb) vb.disabled = false;
+  } else toast('❌ ' + (d.error || 'Erreur'), false);
+}
+
+// ── UNCLAIM ──────────────────────────────────────────────
+async function unclaimAccount(){
+  if(!_currentEmail) return;
+  if(!confirm('Libérer ce compte ?')) return;
+  const r = await fetch('/api/employe/unclaim', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail})});
+  const d = await r.json();
+  if(d.ok){ toast('✅ Compte libéré'); closePanel(); await loadAccounts(); }
+  else toast('❌ ' + (d.error || 'Erreur'), false);
+}
+
+// ── VALIDATE ─────────────────────────────────────────────
+async function validateAccount(){
+  if(!_currentEmail) return;
+  const r = await fetch('/api/employe/validate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail})});
+  const d = await r.json();
+  if(d.ok){
+    toast('🎉 Compte validé comme Grab Ready !');
+    closePanel();
+    await loadAccounts();
+  } else toast('❌ ' + (d.error || 'Erreur'), false);
+}
+
+// ── MAILS ────────────────────────────────────────────────
+function openMails(email){
+  _mailEmail = email;
+  $('mailForEmail').textContent = email;
+  $('mailOverlay').classList.add('open');
+  $('mailPanel').classList.add('open');
+  refreshMails();
+}
+
+async function refreshMails(){
+  if(!_mailEmail) return;
+  $('mailBody').innerHTML = '<div class="loading">⏳ Chargement des mails…</div>';
+  try{
+    const r = await fetch('/api/employe/mails/' + encodeURIComponent(_mailEmail));
+    const d = await r.json();
+    if(!d.ok){
+      $('mailBody').innerHTML = `<div class="empty">❌ ${escHtml(d.error || 'Erreur')}<br><span style="font-size:.75rem;margin-top:8px;display:block">Le cookie iCloud est peut-être expiré.</span></div>`;
+      return;
+    }
+    const mails = d.mails || [];
+    if(!mails.length){
+      $('mailBody').innerHTML = '<div class="empty">📭 Aucun mail reçu</div>';
+      return;
+    }
+    $('mailBody').innerHTML = mails.map(m => `
+      <div class="mail-item ${m.is_grab?'grab':''}">
+        ${m.is_grab ? '<div style="font-size:.7rem;color:var(--green);font-weight:700;margin-bottom:4px">🟢 Mail Grab / Vérification</div>' : ''}
+        <div class="mail-from">De : ${escHtml(m.from||'')}</div>
+        <div class="mail-subject">${escHtml(m.subject||'(sans sujet)')}</div>
+        ${m.preview ? `<div class="mail-preview">${escHtml(m.preview)}</div>` : ''}
+        <div class="mail-date">${escHtml(m.date||'')}</div>
+      </div>`).join('');
+  } catch(e){
+    $('mailBody').innerHTML = `<div class="empty">❌ Erreur réseau : ${escHtml(e.message)}</div>`;
+  }
+}
+
+function closeMails(){
+  $('mailOverlay').classList.remove('open');
+  $('mailPanel').classList.remove('open');
+  _mailEmail = null;
+}
+
+// ── COPY ─────────────────────────────────────────────────
+function copyText(t){
+  navigator.clipboard.writeText(t).then(()=>toast('📋 Copié !')).catch(()=>{
+    const el = document.createElement('textarea');
+    el.value = t; document.body.appendChild(el); el.select();
+    document.execCommand('copy'); document.body.removeChild(el);
+    toast('📋 Copié !');
+  });
+}
+
+// ── INIT ─────────────────────────────────────────────────
+loadAccounts();
+setInterval(loadAccounts, 30000);
 </script>
 </body>
 </html>"""
