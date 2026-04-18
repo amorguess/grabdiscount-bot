@@ -1289,6 +1289,9 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
   <button class="nav-item" onclick="nav('accounts')" id="nav-accounts">
     <span class="nav-icon">🍎</span>Comptes Grab
   </button>
+  <button class="nav-item" onclick="nav('terminal')" id="nav-terminal">
+    <span class="nav-icon">💻</span>Terminal
+  </button>
 
   <div class="sidebar-spacer"></div>
   <div class="sidebar-bottom">
@@ -1470,6 +1473,19 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
     </div>
   </div>
 
+  <!-- TERMINAL (VS Code intégré) -->
+  <div id="page-terminal" class="content" style="display:none;padding:0;height:100%;flex-direction:column">
+    <div style="padding:12px 20px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <span style="font-size:1.1rem">💻</span>
+      <span style="font-weight:700">VS Code — Terminal VPS</span>
+      <a href="http://82.197.70.190:8081" target="_blank" class="btn btn-secondary btn-sm" style="margin-left:auto;font-size:.75rem">↗ Plein écran</a>
+    </div>
+    <iframe id="terminalFrame" src="about:blank"
+      style="flex:1;width:100%;border:none;background:#1e1e1e"
+      allow="clipboard-read; clipboard-write">
+    </iframe>
+  </div>
+
 </div><!-- .main -->
 
 <!-- SLIDE PANEL (order detail) -->
@@ -1562,6 +1578,9 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
   <div class="mobile-nav-item" id="mnav-accounts" onclick="nav('accounts')">
     <span>🍎</span><span>Comptes</span>
   </div>
+  <div class="mobile-nav-item" id="mnav-terminal" onclick="nav('terminal')">
+    <span>💻</span><span>Terminal</span>
+  </div>
 </nav>
 
 <script>
@@ -1595,13 +1614,18 @@ function nav(p){
   // Mobile nav sync
   document.querySelectorAll('.mobile-nav-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('mnav-'+p)?.classList.add('active');
-  ['overview','orders','chat','accounts'].forEach(id=>{
+  ['overview','orders','chat','accounts','terminal'].forEach(id=>{
     const el=document.getElementById('page-'+id);
     if(el) el.style.display=id===p?(id==='overview'?'block':'flex'):'none';
   });
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
   if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList();}
   if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadPacks(); loadAutoGen(); orchStartPolling();}
+  if(p==='terminal'){
+    document.getElementById('page-terminal').style.display='flex';
+    const fr=document.getElementById('terminalFrame');
+    if(fr&&fr.src==='about:blank') fr.src='http://82.197.70.190:8081';
+  }
   // Scroll top on mobile
   window.scrollTo(0,0);
   _page=p;
