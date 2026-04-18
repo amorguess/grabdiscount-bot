@@ -65,9 +65,12 @@ async def _run_bot_async():
 def run_bot_simple():
     while True:
         try:
-            import importlib
+            import asyncio, importlib
             import bot as _bot
             importlib.reload(_bot)
+            # Créer un event loop dédié pour ce thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             print("[BOT] ✅ Démarré", flush=True)
             _bot.main()
         except Exception as e:
@@ -98,6 +101,8 @@ def run_dashboard():
         dashboard._schedule_next()
         # Arrêt du health check minimal → Flask prend le relais
         _health_server.shutdown()
+        _health_server.server_close()  # libère le socket immédiatement
+        time.sleep(0.5)               # laisse le temps au port de se libérer
         print(f"[DASH] 🛵 Dashboard démarré sur port {PORT}", flush=True)
         _flask_ready = True
         dashboard.app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
