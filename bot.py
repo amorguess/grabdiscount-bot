@@ -326,8 +326,27 @@ async def choix_cuisine(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # ──────────────────────────────────────────────────────────
 
 async def recevoir_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
     context.user_data["type_commande"] = "image"
     context.user_data["photo_file_id"] = update.message.photo[-1].file_id
+
+    # ── Alerte admin immédiate dès réception du screenshot commande ──
+    username = f"@{user.username}" if user.username else "_(aucun)_"
+    try:
+        await context.bot.send_photo(
+            chat_id=ADMIN_CHAT_ID,
+            photo=update.message.photo[-1].file_id,
+            caption=(
+                "👁️ *NOUVEAU CLIENT — screenshot panier reçu*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *{user.full_name}*  {username}\n"
+                f"🆔 ID : `{user.id}`\n\n"
+                "_En attente adresse & confirmation_"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Notif admin recevoir_image: {e}")
 
     # Message d'attente si admin absent
     if not get_statut():
@@ -349,6 +368,25 @@ async def recevoir_lien(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if is_url(texte):
         context.user_data["type_commande"]  = "lien"
         context.user_data["lien_commande"]  = texte
+
+        # ── Alerte admin immédiate dès réception du lien commande ──
+        user = update.effective_user
+        username = f"@{user.username}" if user.username else "_(aucun)_"
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=(
+                    "🔗 *NOUVEAU CLIENT — lien commande reçu*\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 *{user.full_name}*  {username}\n"
+                    f"🆔 ID : `{user.id}`\n\n"
+                    f"🔗 {texte}\n\n"
+                    "_En attente adresse & confirmation_"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error(f"Notif admin recevoir_lien: {e}")
 
         # Message d'attente si admin absent
         if not get_statut():
@@ -455,21 +493,19 @@ async def recevoir_preuve_paiement(update: Update, context: ContextTypes.DEFAULT
     data["nom"] = user.full_name
     sauvegarder_commande(order_id, user.id, data, statut="paiement_recu")
 
-    # ── Confirmation client ────────────────────────────────
+    # ── Confirmation client — paiement reçu, PAS encore confirmé ─
     await update.message.reply_text(
-        "╔═══════════════════════════╗\n"
-        "║   🎉  COMMANDE VALIDÉE !  ║\n"
-        "╚═══════════════════════════╝\n\n"
-        f"Merci pour votre paiement *{user.first_name}* ! 🙏\n\n"
+        "🎉 *Paiement reçu !*\n\n"
+        f"Merci *{user.first_name}* 🙏\n\n"
         f"🆔 Référence : `{order_id}`\n"
         f"🍽️ Cuisine   : *{data['cuisine']}*\n"
         f"📍 Adresse   : {data['adresse']}\n"
         f"💰 Payé      : *{data['prix']:,}฿*\n".replace(",", " ") +
         f"⏰ Heure     : {heure}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⏳ Votre commande est en cours de traitement.\n"
-        "🕐 *Vous recevrez votre lien de suivi Grab dans les 5 minutes.*\n\n"
-        "_Nouvelle commande : /start_",
+        "⏳ Votre commande est *en cours de validation*.\n"
+        "✅ *Confirmée dans les 15 minutes maximum.*\n\n"
+        "_Vous recevrez un message dès que la cuisine est lancée !_ 👨‍🍳",
         parse_mode="Markdown",
     )
 
@@ -1188,6 +1224,24 @@ def main() -> None:
                     pass
 
         if not order_id:
+            # Notifie quand même l'admin (photo envoyée hors session)
+            user_fb = update.effective_user
+            uname_fb = f"@{user_fb.username}" if user_fb.username else "_(aucun)_"
+            try:
+                await context.bot.send_photo(
+                    chat_id=ADMIN_CHAT_ID,
+                    photo=update.message.photo[-1].file_id,
+                    caption=(
+                        "📸 *PHOTO reçue — hors session*\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"👤 *{user_fb.full_name}*  {uname_fb}\n"
+                        f"🆔 ID : `{user_fb.id}`\n\n"
+                        "_Aucune commande en cours trouvée_"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
             await update.message.reply_text(
                 "👋 Tapez /start pour passer une commande !",
                 parse_mode="Markdown",
@@ -1276,7 +1330,7 @@ def main() -> None:
     print("✅  GrabDiscount Bot v3 — démarré")
     print("⏹  Ctrl+C pour arrêter")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
 
 
 if __name__ == "__main__":
