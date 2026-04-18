@@ -42,6 +42,15 @@ ADMIN_ID      = int(os.environ.get("ADMIN_CHAT_ID", 0))
 DASHBOARD_PWD = os.environ.get("DASHBOARD_PASSWORD", "grabadmin2024")  # fallback si env var absente
 EMPLOYEE_PWD  = os.environ.get("EMPLOYEE_PASSWORD", "employe2024")     # mot de passe espace employé
 
+# Token simple pour l'espace employé (pas de cookie)
+import hashlib as _hl
+_EMP_TOKEN = _hl.sha256(f"emp:{EMPLOYEE_PWD}:grabdiscount".encode()).hexdigest()
+_EMPLOYE_ID = "emp_" + _hl.sha256(EMPLOYEE_PWD.encode()).hexdigest()[:16]
+
+def _get_employe_id():
+    """ID stable de l'employé — dérivé du mot de passe, pas de session."""
+    return _EMPLOYE_ID
+
 # ── Verrou I/O pour éviter les race conditions ─────────────
 _io_lock = threading.Lock()
 
@@ -152,10 +161,13 @@ def auth(f):
     return wrap
 
 def emp_auth(f):
-    """Décorateur auth pour l'espace employé."""
+    """Décorateur auth pour l'espace employé — token dans header ou cookie."""
     @functools.wraps(f)
     def wrap(*a, **kw):
-        if session.get("role") != "employee": return redirect("/employe")
+        # Accepte le token depuis le header Authorization OU le cookie
+        token = request.headers.get("X-Emp-Token") or session.get("emp_token")
+        if token != _EMP_TOKEN:
+            return jsonify({"ok": False, "error": "auth", "redirect": "/employe"}), 401
         return f(*a, **kw)
     return wrap
 
@@ -1287,26 +1299,25 @@ def _read_icloud_mails(hme_address: str, max_count: int = 10) -> list:
 
 @app.route("/employe", methods=["GET"])
 def employe_page():
-    if session.get("role") == "employee":
-        return render_template_string(EMPLOYE_PAGE)
-    return render_template_string(EMPLOYE_LOGIN, err="")
+    # Toujours servir la page — le JS vérifie le token dans localStorage
+    return render_template_string(EMPLOYE_PAGE)
+
+@app.route("/employe/login", methods=["GET"])
+def employe_login_page():
+    return render_template_string(EMPLOYE_LOGIN)
 
 @app.route("/employe/login", methods=["POST"])
 def employe_login():
     pwd = request.form.get("pwd", "")
     if pwd == EMPLOYEE_PWD:
-        session["role"] = "employee"
-        import hashlib as _hl
-        # ID stable = hash du mot de passe (même ID après reconnexion)
-        session["employe_id"] = "emp_" + _hl.sha256(EMPLOYEE_PWD.encode()).hexdigest()[:16]
-        return redirect("/employe")
-    return render_template_string(EMPLOYE_LOGIN, err="Mot de passe incorrect")
+        # Toujours retourner le token en JSON (login est maintenant toujours AJAX)
+        return jsonify({"ok": True, "token": _EMP_TOKEN, "employe_id": _EMPLOYE_ID})
+    return jsonify({"ok": False, "error": "Mot de passe incorrect"})
 
 @app.route("/employe/logout")
 def employe_logout():
-    session.pop("role", None)
-    session.pop("employe_id", None)
-    return redirect("/employe")
+    session.clear()
+    return redirect("/employe/login")
 
 @app.route("/api/employe/accounts")
 @emp_auth
@@ -1320,7 +1331,7 @@ def api_employe_accounts():
         generate_identity = None
         get_bangkok_address = None
 
-    employe_id = session.get("employe_id", "")
+    employe_id = _get_employe_id()
     accounts = rj(ACCOUNTS_F, [])
     result = []
     for a in accounts:
@@ -1369,7 +1380,7 @@ def api_employe_claim():
     email = (d.get("email") or "").strip()
     if not email:
         return jsonify({"ok": False, "error": "email requis"})
-    employe_id = session.get("employe_id", "")
+    employe_id = _get_employe_id()
     accounts = rj(ACCOUNTS_F, [])
     for a in accounts:
         if a.get("email") == email:
@@ -1390,7 +1401,7 @@ def api_employe_unclaim():
     email = (d.get("email") or "").strip()
     if not email:
         return jsonify({"ok": False, "error": "email requis"})
-    employe_id = session.get("employe_id", "")
+    employe_id = _get_employe_id()
     accounts = rj(ACCOUNTS_F, [])
     for a in accounts:
         if a.get("email") == email:
@@ -1412,7 +1423,7 @@ def api_employe_set_phone():
     phone = (d.get("phone") or "").strip()
     if not email:
         return jsonify({"ok": False, "error": "email requis"})
-    employe_id = session.get("employe_id", "")
+    employe_id = _get_employe_id()
     accounts = rj(ACCOUNTS_F, [])
     for a in accounts:
         if a.get("email") == email:
@@ -1433,7 +1444,7 @@ def api_employe_validate():
     email = (d.get("email") or "").strip()
     if not email:
         return jsonify({"ok": False, "error": "email requis"})
-    employe_id = session.get("employe_id", "")
+    employe_id = _get_employe_id()
 
     try:
         from identity_gen import generate_identity, get_bangkok_address
@@ -1468,7 +1479,7 @@ def api_employe_validate():
 @emp_auth
 def api_employe_mails(email_address):
     """Lit les derniers mails iCloud pour l'adresse donnée."""
-    employe_id = session.get("employe_id", "")
+    employe_id = _get_employe_id()
     # Vérifier que cet employé a bien ce compte en charge
     accounts = rj(ACCOUNTS_F, [])
     acc = next((a for a in accounts if a.get("email") == email_address), None)
@@ -2843,19 +2854,54 @@ input:focus{border-color:var(--green);box-shadow:0 0 0 3px #00b14f15}
 button{width:100%;background:var(--green);border:none;border-radius:12px;padding:14px;color:#fff;
 font-size:1rem;font-weight:700;cursor:pointer;transition:.2s}
 button:hover{background:#009940}
+button:disabled{opacity:.5;cursor:not-allowed}
 .err{color:var(--red);font-size:.85rem;margin-bottom:12px;background:#7f1d1d22;border:1px solid #7f1d1d44;
-border-radius:8px;padding:10px}
+border-radius:8px;padding:10px;display:none}
 </style></head><body>
 <div class="box">
   <div class="logo">🛵</div>
   <h1>GrabDiscount</h1>
   <div class="sub">Espace Employé — Création de comptes</div>
-  {% if err %}<div class="err">{{ err }}</div>{% endif %}
-  <form method="POST" action="/employe/login">
-    <input type="password" name="pwd" placeholder="Mot de passe employé" autofocus>
-    <button>Accéder →</button>
+  <div class="err" id="errMsg"></div>
+  <form id="loginForm">
+    <input type="password" id="pwdInput" name="pwd" placeholder="Mot de passe employé" autofocus>
+    <button type="submit" id="loginBtn">Accéder →</button>
   </form>
 </div>
+<script>
+document.getElementById('loginForm').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('errMsg');
+  const pwd = document.getElementById('pwdInput').value;
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  err.style.display = 'none';
+  try{
+    const r = await fetch('/employe/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/x-www-form-urlencoded'},
+      body: 'pwd=' + encodeURIComponent(pwd)
+    });
+    const d = await r.json();
+    if(d.ok){
+      localStorage.setItem('emp_token', d.token);
+      localStorage.setItem('employe_id', d.employe_id);
+      window.location.href = '/employe';
+    } else {
+      err.textContent = d.error || 'Mot de passe incorrect';
+      err.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Accéder →';
+    }
+  } catch(ex){
+    err.textContent = 'Erreur réseau : ' + ex.message;
+    err.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Accéder →';
+  }
+});
+</script>
 </body></html>"""
 
 EMPLOYE_PAGE = """<!DOCTYPE html>
@@ -2957,7 +3003,7 @@ tr:last-child td{border:none}
       <div class="header-sub">Espace Employé</div>
     </div>
   </div>
-  <a href="/employe/logout" class="btn-logout">🚪 Déconnexion</a>
+  <a href="#" onclick="logout()" class="btn-logout">🚪 Déconnexion</a>
 </div>
 
 <!-- MAIN CONTENT -->
@@ -3038,6 +3084,16 @@ tr:last-child td{border:none}
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
+// ── AUTH TOKEN (localStorage) ────────────────────────────
+const _EMP_TOKEN = localStorage.getItem('emp_token') || '';
+if(!_EMP_TOKEN){ window.location.href = '/employe/login'; }
+
+// Helper fetch avec token
+function authFetch(url, opts={}){
+  opts.headers = Object.assign({}, opts.headers || {}, {'X-Emp-Token': _EMP_TOKEN});
+  return fetch(url, opts);
+}
+
 // ── STATE ────────────────────────────────────────────────
 let _accounts = [];
 let _filter = 'all';
@@ -3085,9 +3141,10 @@ function filteredAccounts(){
 async function loadAccounts(){
   const tbody = $('accountsTable');
   try{
-    const r = await fetch('/api/employe/accounts', {credentials:'include'});
-    if(r.redirected || !r.ok){
-      if(tbody) tbody.innerHTML='<tr><td colspan="5"><div class="empty">🔒 Session expirée — <a href="/employe/logout" style="color:var(--blue)">Reconnectez-vous</a></div></td></tr>';
+    const r = await authFetch('/api/employe/accounts');
+    if(r.status === 401){
+      localStorage.removeItem('emp_token');
+      window.location.href = '/employe/login';
       return;
     }
     const d = await r.json();
@@ -3146,7 +3203,7 @@ function renderAccounts(){
 
 // ── CLAIM ────────────────────────────────────────────────
 async function claimAccount(email){
-  const r = await fetch('/api/employe/claim', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})});
+  const r = await authFetch('/api/employe/claim', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})});
   const d = await r.json();
   if(d.ok){ toast('✅ Compte pris en charge !'); await loadAccounts(); openPanel(email); }
   else toast('❌ ' + (d.error || 'Erreur'), false);
@@ -3234,7 +3291,7 @@ function closePanel(){
 async function savePhone(){
   const phone = ($('phoneInput')?.value || '').trim();
   if(!phone){ toast('⚠ Entrez un numéro', false); return; }
-  const r = await fetch('/api/employe/set_phone', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail, phone})});
+  const r = await authFetch('/api/employe/set_phone', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail, phone})});
   const d = await r.json();
   if(d.ok){
     toast('✅ Numéro enregistré !');
@@ -3252,7 +3309,7 @@ async function savePhone(){
 async function unclaimAccount(){
   if(!_currentEmail) return;
   if(!confirm('Libérer ce compte ?')) return;
-  const r = await fetch('/api/employe/unclaim', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail})});
+  const r = await authFetch('/api/employe/unclaim', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail})});
   const d = await r.json();
   if(d.ok){ toast('✅ Compte libéré'); closePanel(); await loadAccounts(); }
   else toast('❌ ' + (d.error || 'Erreur'), false);
@@ -3261,7 +3318,7 @@ async function unclaimAccount(){
 // ── VALIDATE ─────────────────────────────────────────────
 async function validateAccount(){
   if(!_currentEmail) return;
-  const r = await fetch('/api/employe/validate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail})});
+  const r = await authFetch('/api/employe/validate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email: _currentEmail})});
   const d = await r.json();
   if(d.ok){
     toast('🎉 Compte validé comme Grab Ready !');
@@ -3283,7 +3340,7 @@ async function refreshMails(){
   if(!_mailEmail) return;
   $('mailBody').innerHTML = '<div class="loading">⏳ Chargement des mails…</div>';
   try{
-    const r = await fetch('/api/employe/mails/' + encodeURIComponent(_mailEmail));
+    const r = await authFetch('/api/employe/mails/' + encodeURIComponent(_mailEmail));
     const d = await r.json();
     if(!d.ok){
       $('mailBody').innerHTML = `<div class="empty">❌ ${escHtml(d.error || 'Erreur')}<br><span style="font-size:.75rem;margin-top:8px;display:block">Le cookie iCloud est peut-être expiré.</span></div>`;
@@ -3321,6 +3378,13 @@ function copyText(t){
     document.execCommand('copy'); document.body.removeChild(el);
     toast('📋 Copié !');
   });
+}
+
+// ── LOGOUT ───────────────────────────────────────────────
+function logout(){
+  localStorage.removeItem('emp_token');
+  localStorage.removeItem('employe_id');
+  window.location.href = '/employe/login';
 }
 
 // ── INIT ─────────────────────────────────────────────────
