@@ -3083,14 +3083,22 @@ function filteredAccounts(){
 
 // ── LOAD ─────────────────────────────────────────────────
 async function loadAccounts(){
+  const tbody = $('accountsTable');
   try{
-    const r = await fetch('/api/employe/accounts');
+    const r = await fetch('/api/employe/accounts', {credentials:'include'});
+    if(r.redirected || !r.ok){
+      if(tbody) tbody.innerHTML='<tr><td colspan="5"><div class="empty">🔒 Session expirée — <a href="/employe/logout" style="color:var(--blue)">Reconnectez-vous</a></div></td></tr>';
+      return;
+    }
     const d = await r.json();
-    if(!d.ok){ toast('Erreur chargement', false); return; }
+    if(!d.ok){
+      if(tbody) tbody.innerHTML=`<tr><td colspan="5"><div class="empty">❌ Erreur : ${d.error||'inconnue'}</div></td></tr>`;
+      return;
+    }
     _accounts = d.accounts || [];
     renderAccounts();
   } catch(e){
-    toast('Erreur réseau', false);
+    if(tbody) tbody.innerHTML=`<tr><td colspan="5"><div class="empty">❌ Erreur réseau : ${e.message}</div></td></tr>`;
   }
 }
 
