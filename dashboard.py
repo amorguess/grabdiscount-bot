@@ -1283,11 +1283,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn-logout:hover{color:var(--red);background:#ef444410}
 
 /* MAIN */
-.main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden;min-width:0}
 .topbar{padding:16px 24px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:12px;flex-shrink:0}
 .page-title{font-size:1.1rem;font-weight:700;color:var(--t1)}
 .page-sub{font-size:.8rem;color:var(--t3);margin-left:auto}
-.content{flex:1;overflow-y:auto;padding:24px}
+.content{flex:1;overflow-y:auto;overflow-x:hidden;padding:24px}
 
 /* CARDS */
 .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
@@ -1457,6 +1457,9 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 }
 @media(min-width:769px){
   .mobile-nav{display:none}
+  html,body{height:100%;overflow:hidden}
+  .main{height:100vh;overflow:hidden}
+  .content{overflow-y:auto}
 }
 </style>
 </head>
