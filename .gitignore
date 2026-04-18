@@ -4,5 +4,14 @@ __pycache__/
 orders.json
 messages.json
 status.json
+accounts.json
+config.json
 icloud_gen/emails.txt
 icloud_gen/emails_export.txt
+icloud_gen/chrome_selenium_profile/
+icloud_gen/*.txt
+venv/
+.DS_Store
+*.pma
+*.log
+node_modules/
