@@ -10,7 +10,7 @@ try:
 except ImportError:
     pass
 
-from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
+from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for, make_response
 
 app = Flask(__name__)
 # Secret Flask : obligatoire depuis .env, jamais hardcodé
@@ -161,13 +161,12 @@ def auth(f):
     return wrap
 
 def emp_auth(f):
-    """Décorateur auth pour l'espace employé — token dans header ou cookie."""
+    """Décorateur auth pour l'espace employé — cookie emp_tok persistant."""
     @functools.wraps(f)
     def wrap(*a, **kw):
-        # Accepte le token depuis le header Authorization OU le cookie
-        token = request.headers.get("X-Emp-Token") or session.get("emp_token")
+        token = request.cookies.get("emp_tok") or request.headers.get("X-Emp-Token")
         if token != _EMP_TOKEN:
-            return jsonify({"ok": False, "error": "auth", "redirect": "/employe"}), 401
+            return jsonify({"ok": False, "error": "auth"}), 401
         return f(*a, **kw)
     return wrap
 
@@ -1299,8 +1298,9 @@ def _read_icloud_mails(hme_address: str, max_count: int = 10) -> list:
 
 @app.route("/employe", methods=["GET"])
 def employe_page():
-    # Toujours servir la page — le JS vérifie le token dans localStorage
-    return render_template_string(EMPLOYE_PAGE)
+    if request.cookies.get("emp_tok") == _EMP_TOKEN:
+        return render_template_string(EMPLOYE_PAGE)
+    return redirect("/employe/login")
 
 @app.route("/employe/login", methods=["GET"])
 def employe_login_page():
@@ -1310,14 +1310,18 @@ def employe_login_page():
 def employe_login():
     pwd = request.form.get("pwd", "")
     if pwd == EMPLOYEE_PWD:
-        # Toujours retourner le token en JSON (login est maintenant toujours AJAX)
-        return jsonify({"ok": True, "token": _EMP_TOKEN, "employe_id": _EMPLOYE_ID})
+        resp = make_response(jsonify({"ok": True}))
+        # Cookie persistant 7 jours, même sur HTTP
+        resp.set_cookie("emp_tok", _EMP_TOKEN, max_age=7*24*3600, path="/", samesite="Lax", httponly=False)
+        return resp
     return jsonify({"ok": False, "error": "Mot de passe incorrect"})
 
 @app.route("/employe/logout")
 def employe_logout():
     session.clear()
-    return redirect("/employe/login")
+    resp = make_response(redirect("/employe/login"))
+    resp.set_cookie("emp_tok", "", max_age=0, path="/")
+    return resp
 
 @app.route("/api/employe/accounts")
 @emp_auth
@@ -2874,31 +2878,25 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
   const btn = document.getElementById('loginBtn');
   const err = document.getElementById('errMsg');
   const pwd = document.getElementById('pwdInput').value;
-  btn.disabled = true;
-  btn.textContent = '⏳';
-  err.style.display = 'none';
+  btn.disabled = true; btn.textContent = '⏳'; err.style.display = 'none';
   try{
     const r = await fetch('/employe/login', {
-      method: 'POST',
-      headers: {'Content-Type':'application/x-www-form-urlencoded'},
-      body: 'pwd=' + encodeURIComponent(pwd)
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      credentials:'include',
+      body:'pwd='+encodeURIComponent(pwd)
     });
     const d = await r.json();
-    if(d.ok){
-      localStorage.setItem('emp_token', d.token);
-      localStorage.setItem('employe_id', d.employe_id);
-      window.location.href = '/employe';
-    } else {
+    if(d.ok){ window.location.href = '/employe'; }
+    else{
       err.textContent = d.error || 'Mot de passe incorrect';
       err.style.display = 'block';
-      btn.disabled = false;
-      btn.textContent = 'Accéder →';
+      btn.disabled = false; btn.textContent = 'Accéder →';
     }
   } catch(ex){
-    err.textContent = 'Erreur réseau : ' + ex.message;
+    err.textContent = 'Erreur réseau : '+ex.message;
     err.style.display = 'block';
-    btn.disabled = false;
-    btn.textContent = 'Accéder →';
+    btn.disabled = false; btn.textContent = 'Accéder →';
   }
 });
 </script>
@@ -3084,13 +3082,9 @@ tr:last-child td{border:none}
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
-// ── AUTH TOKEN (localStorage) ────────────────────────────
-const _EMP_TOKEN = localStorage.getItem('emp_token') || '';
-if(!_EMP_TOKEN){ window.location.href = '/employe/login'; }
-
-// Helper fetch avec token
+// Helper fetch — le cookie emp_tok est envoyé automatiquement par le navigateur
 function authFetch(url, opts={}){
-  opts.headers = Object.assign({}, opts.headers || {}, {'X-Emp-Token': _EMP_TOKEN});
+  opts.credentials = 'include';
   return fetch(url, opts);
 }
 
@@ -3143,7 +3137,6 @@ async function loadAccounts(){
   try{
     const r = await authFetch('/api/employe/accounts');
     if(r.status === 401){
-      localStorage.removeItem('emp_token');
       window.location.href = '/employe/login';
       return;
     }
@@ -3381,11 +3374,7 @@ function copyText(t){
 }
 
 // ── LOGOUT ───────────────────────────────────────────────
-function logout(){
-  localStorage.removeItem('emp_token');
-  localStorage.removeItem('employe_id');
-  window.location.href = '/employe/login';
-}
+function logout(){ window.location.href = '/employe/logout'; }
 
 // ── INIT ─────────────────────────────────────────────────
 loadAccounts();
