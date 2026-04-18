@@ -29,12 +29,6 @@ EXPORT_F    = _CODE_DIR / "icloud_gen" / "emails_export.txt"    # emails génér
 EMAILS_F    = _CODE_DIR / "icloud_gen" / "emails.txt"
 STATUS_F    = BASE / "status.json"
 
-HEROSMS_KEY = os.environ.get("HEROSMS_KEY", "")
-
-# sessions d'achat SMS en cours : order_id → {phone, status, sms, email, ...}
-_sms_sessions: dict = {}
-_sms_lock = threading.Lock()
-
 BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID      = int(os.environ.get("ADMIN_CHAT_ID", 0))
 DASHBOARD_PWD = os.environ.get("DASHBOARD_PASSWORD", "grabadmin2024")  # fallback si env var absente
@@ -352,26 +346,6 @@ def api_packs():
     return jsonify({"ok": True, "packs": packs, "total": len(packs)})
 
 
-@app.route("/api/smspool/balance")
-@auth
-def api_smspool_balance():
-    """Retourne le solde SMSPool en temps réel."""
-    key = os.environ.get("SMSPOOL_KEY", "")
-    if not key:
-        return jsonify({"ok": False, "balance": 0, "msg": "SMSPOOL_KEY non configuré"})
-    try:
-        import sys as _sys
-        _sys.path.insert(0, str(_CODE_DIR))
-        from sms_gen.smspool import SMSPool
-        client = SMSPool(key)
-        bal = client.balance()
-        # Nombre de comptes possibles (prix moyen $0.15)
-        comptes = int(bal / 0.15)
-        return jsonify({"ok": True, "balance": bal, "comptes_possibles": comptes})
-    except Exception as e:
-        return jsonify({"ok": False, "balance": 0, "msg": str(e)})
-
-
 @app.route("/api/accounts/update", methods=["POST"])
 @auth
 def api_accounts_update():
@@ -388,65 +362,6 @@ def api_accounts_update():
                 a["used_at"] = None
     wj(ACCOUNTS_F, accounts)
     return jsonify({"ok": True})
-
-@app.route("/api/packs/prebuy", methods=["POST"])
-@auth
-def api_packs_prebuy():
-    """
-    Achète un numéro SMSPool pour chaque pack sans numéro assigné.
-    Retourne la liste des achats effectués.
-    """
-    import datetime as _dt
-    from sms_gen.smspool import SMSPool, SMSPoolError
-    key = os.environ.get("SMSPOOL_KEY", "")
-    if not key:
-        return jsonify({"ok": False, "msg": "SMSPOOL_KEY manquant"})
-
-    sms = SMSPool(key)
-    accounts = rj(ACCOUNTS_F, [])
-    bought = []
-    errors = []
-
-    for a in accounts:
-        # Sauter si déjà un numéro valide assigné
-        if a.get("grab_phone") and a.get("smspool_order_id"):
-            continue
-        if a.get("status") not in ("available", None, ""):
-            continue
-
-        try:
-            order = sms.buy_for_grab("thailand")
-            a["grab_phone"]       = order["phone"]
-            a["smspool_order_id"] = order["id"]
-            a["phone_bought_at"]  = _dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-            bought.append({"email": a["email"], "phone": order["phone"], "order_id": order["id"]})
-        except SMSPoolError as e:
-            errors.append({"email": a["email"], "error": str(e)})
-            break  # stop on error (balance ou limite)
-
-    wj(ACCOUNTS_F, accounts)
-    return jsonify({
-        "ok": True,
-        "bought": len(bought),
-        "errors": len(errors),
-        "details": bought,
-        "error_details": errors
-    })
-
-@app.route("/api/packs/clear_phones", methods=["POST"])
-@auth
-def api_packs_clear_phones():
-    """Libère les numéros pré-achetés (ex: expirés)."""
-    accounts = rj(ACCOUNTS_F, [])
-    cleared = 0
-    for a in accounts:
-        if a.get("smspool_order_id") and a.get("status") == "available":
-            a["grab_phone"]       = ""
-            a["smspool_order_id"] = ""
-            a["phone_bought_at"]  = ""
-            cleared += 1
-    wj(ACCOUNTS_F, accounts)
-    return jsonify({"ok": True, "cleared": cleared})
 
 @app.route("/api/packs/mark_created", methods=["POST"])
 @auth
@@ -487,6 +402,32 @@ def api_packs_mark_created():
             break
     if not found:
         return jsonify({"ok": False, "msg": "email non trouvé"})
+    wj(ACCOUNTS_F, accounts)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/packs/set_phone", methods=["POST"])
+@auth
+def api_packs_set_phone():
+    """Assigne manuellement un numéro de téléphone à un compte."""
+    d = request.json or {}
+    email = (d.get("email") or "").strip()
+    phone = (d.get("phone") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "msg": "email requis"})
+    accounts = rj(ACCOUNTS_F, [])
+    found = False
+    for a in accounts:
+        if a.get("email") == email:
+            a["grab_phone"] = phone
+            if phone and a.get("status") in ("available", None, ""):
+                a["status"] = "full"
+            elif not phone and a.get("status") == "full":
+                a["status"] = "available"
+            found = True
+            break
+    if not found:
+        return jsonify({"ok": False, "msg": "Compte non trouvé"})
     wj(ACCOUNTS_F, accounts)
     return jsonify({"ok": True})
 
@@ -641,148 +582,6 @@ def api_autogen_runnow():
         return jsonify({"ok": False, "msg": "Génération déjà en cours"})
     threading.Thread(target=_run_auto_gen, daemon=True).start()
     return jsonify({"ok": True})
-
-#  SMS — SMS-Activate
-# ─────────────────────────────────────────────────────────────
-
-@app.route("/api/sms/balance")
-@auth
-def api_sms_balance():
-    if not HEROSMS_KEY:
-        return jsonify({"ok": False, "msg": "HEROSMS_KEY non configurée dans .env"})
-    try:
-        from sms_gen.herosms import HeroSMS
-        c = HeroSMS(HEROSMS_KEY)
-        return jsonify({"ok": True, "balance": c.balance()})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
-
-@app.route("/api/sms/buy", methods=["POST"])
-@auth
-def api_sms_buy():
-    """Achète un numéro thaï sur SMS-Activate et surveille le SMS."""
-    if not HEROSMS_KEY:
-        return jsonify({"ok": False, "msg": "HEROSMS_KEY non configurée dans .env"})
-    data  = request.get_json(silent=True) or {}
-    email = data.get("email", "")
-    if not email:
-        return jsonify({"ok": False, "msg": "email requis"})
-
-    try:
-        from sms_gen.herosms import HeroSMS, HeroSMSError
-        client = HeroSMS(HEROSMS_KEY)
-        order  = client.buy_for_grab("thailand")
-
-        oid   = order["id"]
-        phone = order["phone"]
-
-        with _sms_lock:
-            _sms_sessions[str(oid)] = {
-                "order_id":   oid,
-                "phone":      phone,
-                "email":      email,
-                "status":     "PENDING",
-                "sms":        None,
-                "code":       None,
-                "started_at": datetime.datetime.now().isoformat(),
-                "service":    order.get("service", "gr"),
-            }
-
-        # Surveillance SMS en arrière-plan
-        def _watch():
-            import time as _time, re as _re
-            deadline = _time.time() + 120
-            while _time.time() < deadline:
-                try:
-                    result = client.check(oid)
-                    st     = result["status"]   # waiting | received | canceled
-                    with _sms_lock:
-                        sess = _sms_sessions.get(str(oid))
-                        if not sess: return
-                        sess["status"] = st.upper()
-                        if st == "received":
-                            sess["code"] = result["code"]
-                            sess["sms"]  = result["code"]
-                            sess["status"] = "RECEIVED"
-                    if st == "received":
-                        try: client.finish(oid)
-                        except: pass
-                        # Sauvegarde numéro dans accounts.json
-                        accounts = rj(ACCOUNTS_F, [])
-                        for acc in accounts:
-                            if acc.get("email") == email:
-                                acc["grab_phone"] = phone
-                                acc["status"] = "phone_assigned"
-                                break
-                        wj(ACCOUNTS_F, accounts)
-                        return
-                    if st == "canceled":
-                        return
-                    _time.sleep(5)
-                except Exception:
-                    _time.sleep(5)
-            try: client.cancel(oid)
-            except: pass
-            with _sms_lock:
-                sess = _sms_sessions.get(str(oid))
-                if sess: sess["status"] = "TIMEOUT"
-
-        threading.Thread(target=_watch, daemon=True).start()
-        return jsonify({"ok": True, "order_id": oid, "phone": phone})
-
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
-
-@app.route("/api/sms/status/<order_id>")
-@auth
-def api_sms_status(order_id):
-    with _sms_lock:
-        sess = _sms_sessions.get(str(order_id))
-    if not sess:
-        return jsonify({"ok": False, "msg": "Session introuvable"})
-    return jsonify({"ok": True, **sess})
-
-@app.route("/api/sms/cancel/<order_id>", methods=["POST"])
-@auth
-def api_sms_cancel(order_id):
-    if not HEROSMS_KEY:
-        return jsonify({"ok": False})
-    try:
-        from sms_gen.herosms import HeroSMS
-        HeroSMS(HEROSMS_KEY).cancel(int(order_id))
-        with _sms_lock:
-            sess = _sms_sessions.get(str(order_id))
-            if sess: sess["status"] = "CANCELED"
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
-
-@app.route("/api/sms/finish/<order_id>", methods=["POST"])
-@auth
-def api_sms_finish(order_id):
-    if not HEROSMS_KEY:
-        return jsonify({"ok": False})
-    try:
-        from sms_gen.herosms import HeroSMS
-        HeroSMS(HEROSMS_KEY).finish(int(order_id))
-        with _sms_lock:
-            _sms_sessions.pop(str(order_id), None)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
-
-@app.route("/api/sms/retry/<order_id>", methods=["POST"])
-@auth
-def api_sms_retry(order_id):
-    """Redemande un SMS sur le même numéro."""
-    if not HEROSMS_KEY:
-        return jsonify({"ok": False})
-    try:
-        from sms_gen.herosms import HeroSMS
-        HeroSMS(HEROSMS_KEY).retry(int(order_id))
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
 
 # ─────────────────────────────────────────────────────────────
 #  GESTION COMMANDES CLIENTS — validation, annulation, timer
@@ -1030,26 +829,6 @@ def api_hours():
 @auth
 def api_hours_check():
     return jsonify({"open": is_open(), "hours": get_hours()})
-
-@app.route("/api/sms/config", methods=["GET", "POST"])
-@auth
-def api_sms_config():
-    global HEROSMS_KEY
-    if request.method == "POST":
-        key = (request.get_json(silent=True) or {}).get("key", "").strip()
-        if key:
-            HEROSMS_KEY = key
-            env_path = BASE / ".env"
-            try:
-                lines = env_path.read_text().splitlines() if env_path.exists() else []
-                new_lines = [l for l in lines if not l.startswith("HEROSMS_KEY=")]
-                new_lines.append(f"HEROSMS_KEY={key}")
-                env_path.write_text("\n".join(new_lines) + "\n")
-            except Exception:
-                pass
-            return jsonify({"ok": True})
-        return jsonify({"ok": False, "msg": "Clé vide"})
-    return jsonify({"ok": bool(HEROSMS_KEY), "configured": bool(HEROSMS_KEY)})
 
 # ─────────────────────────────────────────────────────────────
 #  GRAB ACCOUNT CREATION PIPELINE
@@ -1609,9 +1388,6 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
     <div class="topbar">
       <span class="page-title">🏭 Usine Grab — Packs Identité</span>
       <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
-        <div style="background:var(--s2);border-radius:8px;padding:6px 12px;font-size:.82rem;color:var(--t3)" title="Solde SMSPool (numéros TH bloqués par Grab — utiliser HeroSMS €0.03/n°)">
-          💰 SMSPool : <span id="smsPoolBal" style="color:var(--green);font-weight:700">—</span>
-        </div>
         <button class="btn btn-secondary" onclick="openGenModal()">⚡ + Emails</button>
         <span style="font-size:.75rem;color:var(--t3);background:var(--s2);padding:6px 10px;border-radius:8px" title="Nécessite un téléphone Android branché — non disponible sur VPS">📱 Usine Android : non dispo sur VPS</span>
       </div>
@@ -1621,16 +1397,16 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
       <!-- 3 compteurs top -->
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
         <div class="card" style="padding:16px 20px;text-align:center">
-          <div style="font-size:2rem;font-weight:800;color:var(--green)" id="packsDispo">—</div>
-          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Emails disponibles</div>
+          <div style="font-size:2rem;font-weight:800;color:var(--orange)" id="packsDispo">—</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Sans numéro</div>
         </div>
         <div class="card" style="padding:16px 20px;text-align:center">
-          <div style="font-size:2rem;font-weight:800;color:var(--blue)" id="packsEnCours">—</div>
-          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">En création</div>
+          <div style="font-size:2rem;font-weight:800;color:var(--green)" id="packsEnCours">—</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Comptes full</div>
         </div>
         <div class="card" style="padding:16px 20px;text-align:center">
           <div style="font-size:2rem;font-weight:800;color:var(--purple)" id="packsReady">—</div>
-          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Comptes Grab prêts</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Utilisés</div>
         </div>
       </div>
 
@@ -1724,66 +1500,6 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeGenModal()">Fermer</button>
       <button class="btn btn-primary" id="genStartBtn" onclick="startGen()">🚀 Lancer la génération</button>
-    </div>
-  </div>
-</div>
-
-<!-- SMS MODAL -->
-<div class="modal-overlay" id="smsModal">
-  <div class="modal" style="max-width:480px">
-    <h2>📱 Numéro virtuel SMS-Activate</h2>
-    <div class="sub" id="smsModalEmail" style="color:var(--purple);font-family:monospace;font-size:.9rem"></div>
-
-    <!-- Config clé API -->
-    <div id="smsConfigSection" style="display:none;background:var(--s2);border-radius:10px;padding:14px;margin:12px 0">
-      <div style="font-weight:600;margin-bottom:8px">🔑 Clé API SMS-Activate requise</div>
-      <div style="font-size:.82rem;color:var(--t3);margin-bottom:10px">Créez un compte sur <b>hero-sms.com</b> → Profil → API Key → Copier la clé</div>
-      <div style="display:flex;gap:8px">
-        <input id="herosmsKeyInput" type="password" placeholder="Votre clé API SMS-Activate…" style="flex:1;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem">
-        <button class="btn btn-primary btn-sm" onclick="saveFivesimKey()">Enregistrer</button>
-      </div>
-    </div>
-
-    <!-- Solde -->
-    <div id="smsBalance" style="font-size:.82rem;color:var(--t3);margin-bottom:12px"></div>
-
-    <!-- Info numéro + code -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0">
-      <div style="background:var(--s2);border-radius:10px;padding:14px;text-align:center">
-        <div style="font-size:.72rem;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Numéro TH</div>
-        <div id="smsPhone" style="font-family:monospace;font-size:1.1rem;font-weight:700;color:var(--t1)">—</div>
-      </div>
-      <div style="background:var(--s2);border-radius:10px;padding:14px;text-align:center">
-        <div style="font-size:.72rem;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Code OTP</div>
-        <div id="smsCode" style="font-family:monospace;font-size:1.4rem;font-weight:800;color:var(--green);letter-spacing:.15em">—</div>
-      </div>
-    </div>
-
-    <!-- Statut -->
-    <div id="smsStatus" style="text-align:center;font-weight:600;margin-bottom:8px;color:var(--t3)">En attente…</div>
-    <pre id="smsLog" style="background:var(--s2);border-radius:8px;padding:12px;font-size:.78rem;color:var(--t2);min-height:60px;white-space:pre-wrap;max-height:120px;overflow-y:auto"></pre>
-
-    <div class="modal-actions" style="margin-top:14px">
-      <button class="btn btn-secondary" onclick="closeSmsModal()">Fermer</button>
-      <button class="btn btn-secondary" id="smsCancelBtn" style="display:none;color:var(--red)" onclick="cancelSms()">⛔ Annuler numéro</button>
-      <button class="btn btn-primary" id="smsFinishBtn" style="display:none" onclick="finishSms()">✅ Compte créé — Terminer</button>
-      <button class="btn btn-primary" id="smsBuyBtn" style="background:#7c3aed" onclick="startSmsBuy()">📱 Acheter un numéro</button>
-    </div>
-  </div>
-</div>
-
-<!-- MARK CREATED MODAL -->
-<div class="modal-overlay" id="markCreatedModal" onclick="if(event.target===this)closeMarkCreated()">
-  <div class="modal" style="max-width:440px">
-    <h2>✅ Compte Grab créé</h2>
-    <div class="sub">Pack : <span id="markCreatedEmailDisplay" style="color:var(--purple);font-family:monospace"></span></div>
-    <div style="margin:18px 0 12px">
-      <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:6px">📱 Numéro de téléphone utilisé (laisser vide si inconnu)</label>
-      <input id="markCreatedPhone" type="text" placeholder="+66XXXXXXXXX" style="width:100%;padding:9px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.9rem;box-sizing:border-box" onkeydown="if(event.key==='Enter')submitMarkCreated()">
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeMarkCreated()">Annuler</button>
-      <button class="btn btn-primary" style="background:#00b14f" onclick="submitMarkCreated()">✅ Confirmer créé</button>
     </div>
   </div>
 </div>
@@ -1885,7 +1601,7 @@ function nav(p){
   });
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
   if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList();}
-  if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadPacks(); loadSmsPoolBalance(); loadAutoGen(); orchStartPolling();}
+  if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadPacks(); loadAutoGen(); orchStartPolling();}
   // Scroll top on mobile
   window.scrollTo(0,0);
   _page=p;
@@ -2222,19 +1938,7 @@ async function uploadCookie(input){
 
 // ── ACCOUNTS ──────────────────────────────────────────────
 async function loadAccounts(){
-  // Compatibilité — maintenant on charge les packs
   await loadPacks();
-  await loadSmsPoolBalance();
-}
-
-async function loadSmsPoolBalance(){
-  try{
-    const r=await fetch('/api/smspool/balance'); const d=await r.json();
-    if(document.getElementById('smsPoolBal')){
-      $('smsPoolBal').textContent=d.ok?`$${(d.balance||0).toFixed(2)}`:'N/A';
-      $('smsPoolComptes').textContent=d.ok?(d.comptes_possibles||0):'?';
-    }
-  }catch(e){}
 }
 
 async function loadPacks(){
@@ -2242,21 +1946,22 @@ async function loadPacks(){
     const r=await fetch('/api/packs'); const d=await r.json();
     const packs=d.packs||[];
     // Compteurs
-    const dispo=packs.filter(p=>p.status==='available'&&!p._locked).length;
-    const enCours=packs.filter(p=>p._locked||p.status==='en_cours').length;
-    const ready=packs.filter(p=>p.status==='grab_ready').length;
-    if($('packsDispo'))  $('packsDispo').textContent=dispo;
-    if($('packsEnCours'))$('packsEnCours').textContent=enCours;
-    if($('packsReady'))  $('packsReady').textContent=ready;
+    const sansTel=packs.filter(p=>p.status==='available').length;
+    const full=packs.filter(p=>p.status==='full'||p.status==='grab_ready').length;
+    const used=packs.filter(p=>p.status==='used').length;
+    if($('packsDispo'))  $('packsDispo').textContent=sansTel;
+    if($('packsEnCours'))$('packsEnCours').textContent=full;
+    if($('packsReady'))  $('packsReady').textContent=used;
     if($('packCount'))   $('packCount').textContent=packs.length;
     // Table
     const tbody=document.getElementById('packsTable'); if(!tbody)return;
     if(!packs.length){tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:24px">📭 Aucun email — cliquez sur "+ Emails"</td></tr>`;return;}
     const STATUS_PACK={
-      'grab_ready':  '<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Créé</span>',
-      'available':   '<span class="pill pill-green">🟢 Dispo</span>',
-      'failed':      '<span class="pill pill-red">❌ Échoué</span>',
-      'en_cours':    '<span class="pill pill-blue">⏳ En cours</span>',
+      'full':      '<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Compte full</span>',
+      'used':      '<span class="pill" style="background:#1e293b;color:#64748b">✓ Utilisé</span>',
+      'available': '<span class="pill pill-orange">📧 Sans numéro</span>',
+      'failed':    '<span class="pill pill-red">❌ Échoué</span>',
+      'grab_ready':'<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Compte full</span>',
     };
     tbody.innerHTML=packs.map(p=>{
       const e=escHtml(p.email||'');
@@ -2267,26 +1972,36 @@ async function loadPacks(){
       const addr=escHtml(addrFull.slice(0,50));
       const phone=p.phone||'';
       const pass='114722165uLCL';
-      const locked=p._locked;
-      const status=locked?'en_cours':(p.status||'available');
+      const status=p.status||'available';
       const badge=STATUS_PACK[status]||`<span class="pill">${status}</span>`;
       const errTip=p._last_error?`title="${escHtml(p._last_error)}"`:''
       const failBadge=p._fail_count>0?`<span style="color:var(--orange);font-size:.7rem;margin-left:4px" ${errTip}>⚠ ${p._fail_count}x</span>`:'';
-      const phoneLine=phone
-        ?`<div style="font-family:monospace;font-size:.72rem;color:var(--green);margin-top:2px">📱 ${escHtml(phone)}</div>`
-        :``;
-      // Actions : copy (toujours) + mark created (si pas encore créé)
+      // Input phone inline (quand pas de numéro)
+      const phoneInput = status !== 'used' && status !== 'full' && status !== 'grab_ready'
+        ? `<div style="display:flex;gap:4px;margin-top:4px">
+             <input id="ph_${emailRaw.replace(/[@.]/g,'_')}" type="text" placeholder="+66XXXXXXXXX"
+               style="width:130px;padding:4px 8px;border:1px solid var(--s3);border-radius:6px;background:var(--s1);color:var(--t1);font-size:.75rem"
+               onkeydown="if(event.key==='Enter')savePhone('${emailRaw.replace(/'/g,"\\'")}')">
+             <button class="btn btn-primary btn-sm" style="font-size:.7rem;padding:3px 8px;background:#3b82f6"
+               onclick="savePhone('${emailRaw.replace(/'/g,"\\'")}')">💾</button>
+           </div>`
+        : '';
+      // Affichage numéro si full
+      const phoneDisplay = phone && (status === 'full' || status === 'grab_ready')
+        ? `<div style="font-family:monospace;font-size:.72rem;color:var(--green);margin-top:2px">📱 ${escHtml(phone)}</div>`
+        : '';
+      // Bouton marquer utilisé
+      const usedBtn = (status === 'full' || status === 'grab_ready')
+        ? `<button class="btn btn-secondary btn-sm" style="font-size:.7rem;padding:3px 7px;margin-left:4px" onclick="markUsed('${emailRaw.replace(/'/g,"\\'")}')">✓ Utilisé</button>`
+        : '';
+      // Bouton copier
       const copyBtn=`<button class="btn btn-secondary btn-sm" style="font-size:.7rem;padding:3px 7px" onclick='copyPackData(${JSON.stringify({email:emailRaw,name:nameRaw,addr:addrFull,pass,phone})})' title="Copier toutes les données">📋</button>`;
-      const doneBtn=status!=='grab_ready'
-        ?`<button class="btn btn-primary btn-sm" style="font-size:.7rem;padding:3px 7px;background:#00b14f;margin-left:4px" onclick="openMarkCreated('${emailRaw.replace(/'/g,"\\'")}')" title="Marquer comme créé">✅</button>`
-        :``;
       return `<tr>
-        <td style="padding:0 6px;color:${locked?'var(--orange)':'var(--t3)'}">
-          ${locked?'⏳':'•'}
-        </td>
+        <td style="padding:0 6px;color:var(--t3)">•</td>
         <td style="font-size:.77rem">
           <div class="mono" style="color:var(--purple)">${e}</div>
-          ${phoneLine}
+          ${phoneDisplay}
+          ${phoneInput}
         </td>
         <td style="font-size:.82rem">
           <div style="font-weight:600;color:var(--t1)">${name}</div>
@@ -2296,7 +2011,7 @@ async function loadPacks(){
           📍 ${addr}${addrFull.length>50?'…':''}
         </td>
         <td>${badge}${failBadge}</td>
-        <td>${copyBtn}${doneBtn}</td>
+        <td>${copyBtn}${usedBtn}</td>
       </tr>`;
     }).join('');
   }catch(ex){
@@ -2315,27 +2030,19 @@ function copyPackData(p){
     toast('📋 Données copiées !');
   });
 }
-// ── Modal "Marquer créé" ──────────────────────────────────
-let _markEmail='';
-function openMarkCreated(email){
-  _markEmail=email;
-  const modal=document.getElementById('markCreatedModal');
-  if(modal){
-    document.getElementById('markCreatedEmailDisplay').textContent=email;
-    document.getElementById('markCreatedPhone').value='';
-    modal.classList.add('open');
-  }
-}
-function closeMarkCreated(){
-  const modal=document.getElementById('markCreatedModal');
-  if(modal) modal.classList.remove('open');
-}
-async function submitMarkCreated(){
-  const phone=document.getElementById('markCreatedPhone').value.trim();
-  const r=await fetch('/api/packs/mark_created',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_markEmail,phone})});
+async function savePhone(email){
+  const key='ph_'+email.replace(/[@.]/g,'_');
+  const phone=document.getElementById(key)?.value.trim()||'';
+  if(!phone){toast('⚠ Entre un numéro',false);return;}
+  const r=await fetch('/api/packs/set_phone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,phone})});
   const d=await r.json();
-  if(d.ok){toast('✅ Compte marqué comme créé !');closeMarkCreated();await loadPacks();}
+  if(d.ok){toast('✅ Numéro enregistré — compte full !');await loadPacks();}
   else toast('❌ '+d.msg,false);
+}
+async function markUsed(email){
+  const r=await fetch('/api/accounts/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,status:'used'})});
+  const d=await r.json();
+  if(d.ok){toast('✓ Compte marqué utilisé');await loadPacks();}
 }
 async function resetFailed(){
   const r=await fetch('/api/packs/reset_failed',{method:'POST'});
@@ -2349,109 +2056,6 @@ async function toggleAccountStatus(email,status){
   await fetch('/api/accounts/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,status,grab_phone:''})});
   toast(status==='used'?'🔗 Marqué comme utilisé':'✅ Libéré');
   await loadAccounts();
-}
-
-// ── SMS MODAL ─────────────────────────────────────────────
-let _smsOrderId=null, _smsPoll=null, _smsEmail='';
-function openSmsModal(email){
-  _smsEmail=email;
-  _smsOrderId=null;
-  if(_smsPoll){clearInterval(_smsPoll);_smsPoll=null;}
-  $('smsModalEmail').textContent=email;
-  $('smsPhone').textContent='—';
-  $('smsCode').textContent='—';
-  $('smsStatus').textContent='En attente…';
-  $('smsStatus').style.color='var(--t3)';
-  $('smsBuyBtn').disabled=false;
-  $('smsCancelBtn').style.display='none';
-  $('smsFinishBtn').style.display='none';
-  $('smsLog').textContent='';
-  // Vérifie la clé SMS-Activate
-  fetch('/api/sms/config').then(r=>r.json()).then(d=>{
-    if(!d.configured){
-      $('smsConfigSection').style.display='block';
-      $('smsBuyBtn').disabled=true;
-    } else {
-      $('smsConfigSection').style.display='none';
-      // Affiche le solde
-      fetch('/api/sms/balance').then(r=>r.json()).then(b=>{
-        if(b.ok) $('smsBalance').textContent=`Solde SMS-Activate : ${parseFloat(b.balance).toFixed(2)} $`;
-      });
-    }
-  });
-  document.getElementById('smsModal').classList.add('open');
-}
-function closeSmsModal(){
-  document.getElementById('smsModal').classList.remove('open');
-  if(_smsPoll){clearInterval(_smsPoll);_smsPoll=null;}
-}
-async function saveFivesimKey(){
-  const key=$('herosmsKeyInput').value.trim();
-  if(!key)return;
-  const r=await fetch('/api/sms/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
-  const d=await r.json();
-  if(d.ok){toast('✅ Clé SMS-Activate enregistrée !');$('smsConfigSection').style.display='none';$('smsBuyBtn').disabled=false;fetch('/api/sms/balance').then(r=>r.json()).then(b=>{if(b.ok)$('smsBalance').textContent=`Solde SMS-Activate : ${parseFloat(b.balance).toFixed(2)} $`;});}
-  else toast('❌ '+d.msg,false);
-}
-async function startSmsBuy(){
-  $('smsBuyBtn').disabled=true;
-  $('smsStatus').textContent='Achat du numéro en cours…';
-  $('smsLog').textContent='🔄 Connexion à SMS-Activate…';
-  const r=await fetch('/api/sms/buy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_smsEmail})});
-  const d=await r.json();
-  if(!d.ok){$('smsStatus').textContent='❌ Erreur';$('smsLog').textContent=d.msg||'Erreur';$('smsBuyBtn').disabled=false;return;}
-  _smsOrderId=d.order_id;
-  $('smsPhone').textContent=d.phone;
-  $('smsStatus').textContent='⏳ En attente du SMS…';
-  $('smsStatus').style.color='var(--orange)';
-  $('smsCancelBtn').style.display='inline-block';
-  $('smsLog').textContent=`📱 Numéro : ${d.phone}\n⏳ En attente du code Grab…`;
-  // Poll status
-  _smsPoll=setInterval(async()=>{
-    const sr=await fetch(`/api/sms/status/${_smsOrderId}`);
-    const sd=await sr.json();
-    if(!sd.ok)return;
-    const st=sd.status;
-    if(st==='RECEIVED'){
-      clearInterval(_smsPoll);_smsPoll=null;
-      $('smsCode').textContent=sd.code||sd.sms||'—';
-      $('smsCode').style.color='var(--green)';
-      $('smsStatus').textContent='✅ SMS reçu !';
-      $('smsStatus').style.color='var(--green)';
-      $('smsLog').textContent=`📱 Numéro : ${sd.phone}\n✅ Code reçu : ${sd.code||'—'}\n📩 SMS : ${sd.sms||'—'}`;
-      $('smsCancelBtn').style.display='none';
-      $('smsFinishBtn').style.display='inline-block';
-      toast('✅ SMS reçu — code : '+sd.code);
-      await loadAccounts();
-    } else if(st==='TIMEOUT'||st==='CANCELED'||st==='BANNED'){
-      clearInterval(_smsPoll);_smsPoll=null;
-      $('smsStatus').textContent=`⚠ ${st}`;
-      $('smsStatus').style.color='var(--red)';
-      $('smsLog').textContent+=`\n⚠ Statut : ${st}`;
-      $('smsCancelBtn').style.display='none';
-      $('smsBuyBtn').disabled=false;
-      $('smsBuyBtn').textContent='🔄 Réessayer';
-    } else {
-      $('smsLog').textContent=`📱 Numéro : ${sd.phone}\n⏳ Statut : ${st}\n_En attente du SMS Grab…_`;
-    }
-  },5000);
-}
-async function cancelSms(){
-  if(!_smsOrderId)return;
-  await fetch(`/api/sms/cancel/${_smsOrderId}`,{method:'POST'});
-  if(_smsPoll){clearInterval(_smsPoll);_smsPoll=null;}
-  $('smsStatus').textContent='Annulé';
-  $('smsCancelBtn').style.display='none';
-  $('smsBuyBtn').disabled=false;
-  $('smsBuyBtn').textContent='🔄 Réessayer';
-  toast('Numéro annulé',false);
-}
-async function finishSms(){
-  if(!_smsOrderId)return;
-  await fetch(`/api/sms/finish/${_smsOrderId}`,{method:'POST'});
-  closeSmsModal();
-  await loadAccounts();
-  toast('✅ Compte créé avec succès !');
 }
 
 // ── GENERATE MODAL ────────────────────────────────────────
@@ -2524,23 +2128,6 @@ async function startGen(){
 
 // ── ORCHESTRATEUR ─────────────────────────────────────────
 let _orchPoll = null;
-
-async function preBuyNumbers(){
-  const btn = document.getElementById('preBuyBtn');
-  if(btn) btn.textContent = '⏳ Achat…';
-  try {
-    const r = await fetch('/api/packs/prebuy', {method:'POST'});
-    const d = await r.json();
-    if(d.ok){
-      toast(`📱 ${d.bought} numéros achetés !`);
-      await loadPacks();
-      await loadSmsPoolBalance();
-    } else {
-      toast('⚠ ' + (d.msg||'Erreur'), false);
-    }
-  } catch(e){ toast('❌ Erreur réseau', false); }
-  finally { if(btn) btn.textContent = '📱 Acheter numéros'; }
-}
 
 async function orchStart(){
   const r=await fetch('/api/orch/start',{method:'POST'}); const d=await r.json();
