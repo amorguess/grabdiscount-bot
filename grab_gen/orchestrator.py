@@ -73,9 +73,8 @@ def get_adb_devices() -> list:
                 device_id = line.split("\t")[0]
                 devices.append(device_id)
         return devices
-    except Exception as e:
-        slog(f"ADB error: {e}", "ERROR")
-        return []
+    except Exception:
+        return []  # ADB non disponible sur ce serveur (normal sur VPS)
 
 
 # ── Récupère email disponible ─────────────────────────────

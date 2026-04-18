@@ -237,15 +237,41 @@ def api_dispo():
 @app.route("/api/bot/health")
 @auth
 def api_bot_health():
-    """Vérifie si bot.py tourne comme process local."""
+    """Vérifie si le bot Telegram répond via l'API."""
     import subprocess as _sp
+    # Méthode 1 : vérifier via l'API Telegram (getMe)
+    if BOT_TOKEN:
+        try:
+            r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=5)
+            d = r.json()
+            if d.get("ok"):
+                name = d["result"].get("first_name", "Bot")
+                return jsonify({"alive": True, "msg": f"@{d['result'].get('username','bot')} en ligne"})
+        except Exception:
+            pass
+    # Méthode 2 : vérifier via pgrep
     try:
         r = _sp.run(["pgrep", "-f", "bot.py"], capture_output=True, text=True)
         pids = [p.strip() for p in r.stdout.strip().splitlines() if p.strip()]
         alive = len(pids) > 0
-        return jsonify({"alive": alive, "msg": f"PIDs: {', '.join(pids)}" if alive else "Aucun process bot.py trouvé"})
+        return jsonify({"alive": alive, "msg": f"PIDs: {', '.join(pids)}" if alive else "Bot hors ligne"})
     except Exception as e:
         return jsonify({"alive": False, "msg": str(e)})
+
+@app.route("/api/cookie/upload", methods=["POST"])
+@auth
+def api_cookie_upload():
+    """Upload du fichier cookie iCloud."""
+    try:
+        f = request.files.get("cookie")
+        if not f:
+            return jsonify({"ok": False, "error": "Aucun fichier reçu"})
+        cookie_path = _CODE_DIR / "icloud_gen" / "cookie.txt"
+        cookie_path.parent.mkdir(parents=True, exist_ok=True)
+        f.save(str(cookie_path))
+        return jsonify({"ok": True, "msg": "Cookie mis à jour ✅"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 @app.route("/api/restaurants/count")
 @auth
@@ -1625,7 +1651,12 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
             </div>
           </label>
           <button class="btn btn-secondary btn-sm" onclick="runNow()">▶ Now</button>
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0" title="Mettre à jour le cookie iCloud (expire tous les 2-3 jours)">
+            🍪 Cookie
+            <input type="file" accept=".txt" style="display:none" onchange="uploadCookie(this)">
+          </label>
         </div>
+        <div id="cookieStatus" style="font-size:.75rem;color:var(--t3);margin-top:6px;display:none"></div>
       </div>
 
       <!-- Tableau des packs -->
@@ -2187,6 +2218,20 @@ async function runNow(){
   const r=await fetch('/api/autogen/runnow',{method:'POST'}); const d=await r.json();
   if(d.ok){toast('🔄 Génération lancée…');setTimeout(()=>{loadAccounts();loadAutoGen();},8000);}
   else toast('⚠ '+d.msg,false);
+}
+async function uploadCookie(input){
+  const file=input.files[0]; if(!file)return;
+  const status=document.getElementById('cookieStatus');
+  status.style.display='block'; status.textContent='⏳ Upload en cours…'; status.style.color='var(--t3)';
+  const fd=new FormData(); fd.append('cookie',file);
+  try{
+    const r=await fetch('/api/cookie/upload',{method:'POST',body:fd});
+    const d=await r.json();
+    if(d.ok){status.textContent='✅ Cookie mis à jour !';status.style.color='var(--green)';toast('🍪 Cookie iCloud mis à jour !');}
+    else{status.textContent='❌ Erreur : '+d.error;status.style.color='var(--red)';toast('❌ '+d.error,false);}
+  }catch(e){status.textContent='❌ Erreur réseau';status.style.color='var(--red)';}
+  setTimeout(()=>{status.style.display='none';},5000);
+  input.value='';
 }
 
 // ── ACCOUNTS ──────────────────────────────────────────────
