@@ -1420,6 +1420,44 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--s3);border-radius:4px}
+
+/* ── MOBILE ─────────────────────────────────────────────── */
+@media(max-width:768px){
+  html,body{overflow:auto}
+  .app{flex-direction:column}
+  .sidebar{display:none}
+  .main{height:auto;overflow:visible;padding-bottom:70px}
+  .content{overflow:visible;padding:12px}
+  .grid-4{grid-template-columns:1fr 1fr!important}
+  .grid-2{grid-template-columns:1fr!important}
+  .stat-grid{grid-template-columns:1fr 1fr!important}
+  .table-wrap{overflow-x:auto;border-radius:10px}
+  .table-wrap table{display:table;max-height:none;min-width:600px}
+  .btn{padding:10px 14px;font-size:.9rem}
+  .card{padding:14px}
+  .card-sm{padding:12px}
+  .page-header{flex-direction:column;gap:8px;align-items:flex-start}
+  .kpi-val{font-size:1.6rem}
+  /* Barre de navigation mobile en bas */
+  .mobile-nav{
+    display:flex;position:fixed;bottom:0;left:0;right:0;
+    background:var(--s1);border-top:1px solid var(--s3);
+    z-index:999;padding:8px 0 12px;
+  }
+  .mobile-nav-item{
+    flex:1;display:flex;flex-direction:column;align-items:center;
+    gap:3px;font-size:.65rem;color:var(--t3);cursor:pointer;
+    padding:4px 0;transition:.2s;
+  }
+  .mobile-nav-item.active{color:var(--green)}
+  .mobile-nav-item span:first-child{font-size:1.3rem}
+  .chat-layout{grid-template-columns:1fr!important;height:auto}
+  .conv-list{height:200px;border-right:none;border-bottom:1px solid var(--s3)}
+  .topbar{padding:10px 12px}
+}
+@media(min-width:769px){
+  .mobile-nav{display:none}
+}
 </style>
 </head>
 <body>
@@ -1774,6 +1812,22 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 <!-- TOAST -->
 <div class="toast-wrap" id="toastWrap"></div>
 
+<!-- MOBILE NAV BAR -->
+<nav class="mobile-nav" id="mobileNav">
+  <div class="mobile-nav-item active" id="mnav-overview" onclick="nav('overview')">
+    <span>🏠</span><span>Accueil</span>
+  </div>
+  <div class="mobile-nav-item" id="mnav-orders" onclick="nav('orders')">
+    <span>📦</span><span>Commandes</span>
+  </div>
+  <div class="mobile-nav-item" id="mnav-chat" onclick="nav('chat')">
+    <span>💬</span><span>Messages</span>
+  </div>
+  <div class="mobile-nav-item" id="mnav-accounts" onclick="nav('accounts')">
+    <span>🍎</span><span>Comptes</span>
+  </div>
+</nav>
+
 <script>
 // ── STATE ─────────────────────────────────────────────────
 let _orders={}, _msgs={}, _accounts=[], _filter='all', _activeChat=null, _revenueChart=null;
@@ -1802,6 +1856,9 @@ let _page='overview';
 function nav(p){
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('nav-'+p)?.classList.add('active');
+  // Mobile nav sync
+  document.querySelectorAll('.mobile-nav-item').forEach(el=>el.classList.remove('active'));
+  document.getElementById('mnav-'+p)?.classList.add('active');
   ['overview','orders','chat','accounts'].forEach(id=>{
     const el=document.getElementById('page-'+id);
     if(el) el.style.display=id===p?(id==='overview'?'block':'flex'):'none';
@@ -1809,6 +1866,8 @@ function nav(p){
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
   if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList();}
   if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadPacks(); loadSmsPoolBalance(); loadAutoGen(); orchStartPolling();}
+  // Scroll top on mobile
+  window.scrollTo(0,0);
   _page=p;
 }
 
