@@ -171,8 +171,8 @@ def _run_auto_gen():
     try:
         import subprocess as _sp
         proc = _sp.run(
-            ["python3", str(BASE / "icloud_gen" / "run.py"), "generate", str(count)],
-            capture_output=True, text=True, cwd=str(BASE), timeout=120
+            ["python3", str(_CODE_DIR / "icloud_gen" / "run.py"), "generate", str(count)],
+            capture_output=True, text=True, cwd=str(_CODE_DIR), timeout=120
         )
         out = proc.stdout + proc.stderr
         # Compte les emails réellement générés
@@ -361,7 +361,7 @@ def api_smspool_balance():
         return jsonify({"ok": False, "balance": 0, "msg": "SMSPOOL_KEY non configuré"})
     try:
         import sys as _sys
-        _sys.path.insert(0, str(BASE))
+        _sys.path.insert(0, str(_CODE_DIR))
         from sms_gen.smspool import SMSPool
         client = SMSPool(key)
         bal = client.balance()
@@ -529,9 +529,9 @@ def api_gen_start():
         _gen_status["log"] = f"Lancement du générateur iCloud… ({n_emails} emails)\n"
         try:
             proc = subprocess.Popen(
-                ["python3", str(BASE / "icloud_gen" / "run.py"), "generate", str(n_emails)],
+                ["python3", str(_CODE_DIR / "icloud_gen" / "run.py"), "generate", str(n_emails)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, cwd=str(BASE)
+                text=True, cwd=str(_CODE_DIR)
             )
             for line in proc.stdout:
                 _gen_status["log"] += line
@@ -1613,8 +1613,7 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
           💰 SMSPool : <span id="smsPoolBal" style="color:var(--green);font-weight:700">—</span>
         </div>
         <button class="btn btn-secondary" onclick="openGenModal()">⚡ + Emails</button>
-        <button id="orchStartBtn" class="btn btn-primary" style="background:#00b14f" onclick="orchStart()">▶ Lancer l'usine</button>
-        <button id="orchStopBtn" class="btn btn-secondary" onclick="orchStop()" style="display:none">⏹ Arrêter</button>
+        <span style="font-size:.75rem;color:var(--t3);background:var(--s2);padding:6px 10px;border-radius:8px" title="Nécessite un téléphone Android branché — non disponible sur VPS">📱 Usine Android : non dispo sur VPS</span>
       </div>
     </div>
     <div class="content">
@@ -1681,26 +1680,13 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
         </table>
       </div>
 
-      <!-- Orchestrateur stats + log -->
-      <div class="card" style="margin-top:20px">
-        <div class="table-header">
-          <span class="table-title">📊 Usine — Stats temps réel</span>
-          <span id="orchSpeed" style="color:var(--t3);font-size:.85rem">0 comptes/h</span>
-        </div>
-        <div style="padding:16px 20px">
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
-            <div class="stat-mini"><div id="orchTotal" style="font-size:1.8rem;font-weight:700;color:var(--green)">0</div><div style="color:var(--t3);font-size:.75rem">Créés total</div></div>
-            <div class="stat-mini"><div id="orchFailed" style="font-size:1.8rem;font-weight:700;color:var(--orange)">0</div><div style="color:var(--t3);font-size:.75rem">Échecs</div></div>
-            <div class="stat-mini"><div id="orchWorkers" style="font-size:1.8rem;font-weight:700;color:var(--blue)">0</div><div style="color:var(--t3);font-size:.75rem">Workers actifs</div></div>
-            <div class="stat-mini"><div id="orchDevices" style="font-size:1.8rem;font-weight:700;color:var(--purple)">0</div><div style="color:var(--t3);font-size:.75rem">Devices ADB</div></div>
-          </div>
-          <table style="width:100%;font-size:.8rem">
-            <thead><tr><th>Device</th><th>Statut</th><th>Email en cours</th><th>Téléphone</th><th>Créés</th><th>Échecs</th></tr></thead>
-            <tbody id="orchWorkersTable"><tr><td colspan="6" style="text-align:center;color:var(--t3);padding:16px">Aucun worker — cliquez sur Lancer l'usine</td></tr></tbody>
-          </table>
-          <div style="margin-top:12px">
-            <div style="color:var(--t3);font-size:.75rem;margin-bottom:4px">Log</div>
-            <div id="orchLog" style="background:var(--bg2,var(--s1));border-radius:8px;padding:12px;font-family:monospace;font-size:.72rem;height:160px;overflow-y:auto;color:var(--t2)"></div>
+      <!-- Note Orchestrateur (désactivé sur VPS) -->
+      <div class="card" style="margin-top:20px;border:1px solid var(--s3)">
+        <div style="padding:16px 20px;display:flex;align-items:center;gap:14px">
+          <span style="font-size:1.8rem">📱</span>
+          <div>
+            <div style="font-weight:700;margin-bottom:4px">Usine Android — Création auto de comptes Grab</div>
+            <div style="font-size:.82rem;color:var(--t3)">Nécessite un téléphone Android branché en USB avec ADB + Appium. Non disponible sur VPS. Pour activer, branchez un téléphone et relancez en local.</div>
           </div>
         </div>
       </div>
