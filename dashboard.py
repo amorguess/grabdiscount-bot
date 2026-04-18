@@ -161,12 +161,9 @@ def auth(f):
     return wrap
 
 def emp_auth(f):
-    """Décorateur auth pour l'espace employé — cookie emp_tok persistant."""
+    """Pas d'auth pour l'instant — accès direct."""
     @functools.wraps(f)
     def wrap(*a, **kw):
-        token = request.cookies.get("emp_tok") or request.headers.get("X-Emp-Token")
-        if token != _EMP_TOKEN:
-            return jsonify({"ok": False, "error": "auth"}), 401
         return f(*a, **kw)
     return wrap
 
@@ -1313,9 +1310,7 @@ def employe_diag():
 
 @app.route("/employe", methods=["GET"])
 def employe_page():
-    if request.cookies.get("emp_tok") == _EMP_TOKEN:
-        return render_template_string(EMPLOYE_PAGE)
-    return redirect("/employe/login")
+    return render_template_string(EMPLOYE_PAGE)
 
 @app.route("/employe/login", methods=["GET"])
 def employe_login_page():
@@ -3151,10 +3146,6 @@ async function loadAccounts(){
   const tbody = $('accountsTable');
   try{
     const r = await authFetch('/api/employe/accounts');
-    if(r.status === 401){
-      window.location.href = '/employe/login';
-      return;
-    }
     const d = await r.json();
     if(!d.ok){
       if(tbody) tbody.innerHTML=`<tr><td colspan="5"><div class="empty">❌ Erreur : ${d.error||'inconnue'}</div></td></tr>`;
