@@ -1296,6 +1296,21 @@ def _read_icloud_mails(hme_address: str, max_count: int = 10) -> list:
 #  ESPACE EMPLOYÉ — ROUTES
 # ─────────────────────────────────────────────────────────────
 
+@app.route("/employe/diag")
+def employe_diag():
+    """Page de diagnostic — montre les cookies reçus par le serveur."""
+    tok = request.cookies.get("emp_tok", "")
+    ok = tok == _EMP_TOKEN
+    return f"""<html><body style="font-family:monospace;padding:20px;background:#111;color:#eee">
+    <h2>🔍 Diagnostic employé</h2>
+    <p>Cookie emp_tok reçu : <b style="color:{'#0f0' if tok else '#f44'}">{tok[:20]+'...' if tok else 'AUCUN'}</b></p>
+    <p>Token attendu (début) : <b style="color:#aaa">{_EMP_TOKEN[:20]}...</b></p>
+    <p>Cookie valide : <b style="color:{'#0f0' if ok else '#f44'}">{'✅ OUI' if ok else '❌ NON'}</b></p>
+    <p>Tous les cookies reçus : <code>{dict(request.cookies)}</code></p>
+    <br><a href="/employe/login" style="color:#3bf">→ Aller au login</a>
+    &nbsp;&nbsp;<a href="/employe" style="color:#3bf">→ Aller à /employe</a>
+    </body></html>"""
+
 @app.route("/employe", methods=["GET"])
 def employe_page():
     if request.cookies.get("emp_tok") == _EMP_TOKEN:
