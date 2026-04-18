@@ -25,9 +25,17 @@ BASE        = Path(os.environ.get("DATA_DIR", str(_CODE_DIR)))  # données → D
 ORDERS_F    = BASE / "orders.json"
 MESSAGES_F  = BASE / "messages.json"
 ACCOUNTS_F  = BASE / "accounts.json"
+CONFIG_F    = BASE / "config.json"
 EXPORT_F    = _CODE_DIR / "icloud_gen" / "emails_export.txt"    # emails générés = code
 EMAILS_F    = _CODE_DIR / "icloud_gen" / "emails.txt"
 STATUS_F    = BASE / "status.json"
+
+DEFAULT_CONFIG = {
+    "budgets": [
+        {"panier": 1000, "prix": 500,  "wise": "https://wise.com/pay/r/Fk4y8LLVr8a-Z0M"},
+        {"panier": 2000, "prix": 1000, "wise": "https://wise.com/pay/r/Z_Lts2te9J1YA98"},
+    ]
+}
 
 BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID      = int(os.environ.get("ADMIN_CHAT_ID", 0))
@@ -830,6 +838,101 @@ def api_hours():
 def api_hours_check():
     return jsonify({"open": is_open(), "hours": get_hours()})
 
+# ── CONFIG (tarifs) ───────────────────────────────────────────
+
+def get_config():
+    """Retourne la config, initialise avec les valeurs par défaut si absente."""
+    if not CONFIG_F.exists():
+        wj(CONFIG_F, DEFAULT_CONFIG)
+        return DEFAULT_CONFIG
+    c = rj(CONFIG_F, {})
+    if not c.get("budgets"):
+        wj(CONFIG_F, DEFAULT_CONFIG)
+        return DEFAULT_CONFIG
+    return c
+
+@app.route("/api/config", methods=["GET"])
+@auth
+def api_config_get():
+    return jsonify(get_config())
+
+@app.route("/api/config", methods=["POST"])
+@auth
+def api_config_post():
+    d = request.get_json(silent=True) or {}
+    c = get_config()
+    if "budgets" in d:
+        budgets = d["budgets"]
+        if not isinstance(budgets, list):
+            return jsonify({"ok": False, "msg": "budgets doit être une liste"})
+        c["budgets"] = budgets
+    wj(CONFIG_F, c)
+    return jsonify({"ok": True, "config": c})
+
+# ── BACKUP Telegram ────────────────────────────────────────────
+
+def _backup_to_telegram():
+    """Envoie accounts.json et orders.json en DM à l'admin Telegram."""
+    if not BOT_TOKEN or not ADMIN_ID:
+        return False
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    results = []
+    for fpath, label in [(ACCOUNTS_F, "accounts"), (ORDERS_F, "orders")]:
+        try:
+            data = rj(fpath, {})
+            count = len(data) if isinstance(data, (list, dict)) else "?"
+            caption = f"💾 Backup {label} — {now} — {count} entrées"
+            with open(fpath, "rb") as f:
+                r = requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                    data={"chat_id": ADMIN_ID, "caption": caption},
+                    files={"document": (fpath.name, f, "application/json")},
+                    timeout=20
+                )
+            results.append(r.json().get("ok", False))
+        except Exception as e:
+            results.append(False)
+    return all(results)
+
+def _backup_scheduler_thread():
+    """Thread qui envoie un backup tous les jours à 03:00 Bangkok (UTC+7)."""
+    import time as _time
+    while True:
+        try:
+            import pytz
+            tz = pytz.timezone("Asia/Bangkok")
+            now = datetime.datetime.now(tz)
+            target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += datetime.timedelta(days=1)
+            secs = (target - now).total_seconds()
+        except Exception:
+            secs = 86400  # fallback 24h si pytz absent
+        _time.sleep(secs)
+        try:
+            _backup_to_telegram()
+        except Exception:
+            pass
+
+_backup_thread = threading.Thread(target=_backup_scheduler_thread, daemon=True)
+_backup_thread.start()
+
+@app.route("/api/backup", methods=["POST"])
+@auth
+def api_backup():
+    """Déclenche un backup manuel vers Telegram."""
+    def _run():
+        _backup_to_telegram()
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "msg": "Backup lancé vers Telegram"})
+
+# ── HEALTH ────────────────────────────────────────────────────
+
+@app.route("/health")
+def health():
+    """Endpoint de monitoring sans auth — retourne ok + timestamp."""
+    return jsonify({"ok": True, "ts": datetime.datetime.utcnow().isoformat() + "Z"})
+
 # ─────────────────────────────────────────────────────────────
 #  GRAB ACCOUNT CREATION PIPELINE
 # ─────────────────────────────────────────────────────────────
@@ -1349,6 +1452,28 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
       <table><thead><tr><th>Référence</th><th>Client</th><th>Cuisine</th><th>Prix</th><th>Statut</th><th>Heure</th></tr></thead>
       <tbody id="o-recent-orders"></tbody></table>
     </div>
+
+    <!-- TARIFS CONFIGURABLES -->
+    <div class="card" style="margin-top:20px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <span style="font-size:1.2rem">💰</span>
+        <div style="font-size:.9rem;font-weight:700">Tarifs</div>
+        <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="saveTarifs()">💾 Sauvegarder</button>
+        <button class="btn btn-secondary btn-sm" onclick="doBackup()">💾 Backup Telegram</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse" id="tarifsTable">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px 12px;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--t3);border-bottom:1px solid var(--s3)">Panier Grab (฿)</th>
+            <th style="text-align:left;padding:8px 12px;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--t3);border-bottom:1px solid var(--s3)">Prix client (฿)</th>
+            <th style="text-align:left;padding:8px 12px;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--t3);border-bottom:1px solid var(--s3)">Lien Wise</th>
+          </tr>
+        </thead>
+        <tbody id="tarifsBody">
+          <tr><td colspan="3" style="padding:16px;text-align:center;color:var(--t3)">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- ORDERS -->
@@ -1434,6 +1559,19 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
         <div id="cookieStatus" style="font-size:.75rem;color:var(--t3);margin-top:6px;display:none"></div>
       </div>
 
+      <!-- Recherche + filtres comptes -->
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+        <input class="input" id="packsSearch" style="flex:1;min-width:200px;max-width:320px" placeholder="🔍 Rechercher email, nom, adresse…" oninput="onPacksSearch()">
+        <div class="filter-bar" style="margin:0;flex:1;min-width:260px">
+          <span class="filter-pill active" onclick="setPackFilter(this,'all')">Tous</span>
+          <span class="filter-pill" onclick="setPackFilter(this,'available')">📧 Sans numéro</span>
+          <span class="filter-pill" onclick="setPackFilter(this,'full')">✅ Full</span>
+          <span class="filter-pill" onclick="setPackFilter(this,'grab_ready')">✅ Grab ready</span>
+          <span class="filter-pill" onclick="setPackFilter(this,'used')">✓ Utilisé</span>
+          <span class="filter-pill" onclick="setPackFilter(this,'failed')">❌ Échoué</span>
+        </div>
+      </div>
+
       <!-- Tableau des packs -->
       <div class="table-wrap">
         <div class="table-header">
@@ -1454,6 +1592,14 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
           </thead>
           <tbody id="packsTable"><tr><td colspan="6" style="text-align:center;color:var(--t3);padding:24px">Chargement…</td></tr></tbody>
         </table>
+        <!-- Pagination -->
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--s3)">
+          <span style="font-size:.8rem;color:var(--t3)" id="packsPageInfo">—</span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn btn-secondary btn-sm" id="packsPrev" onclick="packsChangePage(-1)">← Précédent</button>
+            <button class="btn btn-secondary btn-sm" id="packsNext" onclick="packsChangePage(1)">Suivant →</button>
+          </div>
+        </div>
       </div>
 
       <!-- Note Orchestrateur (désactivé sur VPS) -->
@@ -1568,6 +1714,7 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 <script>
 // ── STATE ─────────────────────────────────────────────────
 let _orders={}, _msgs={}, _accounts=[], _filter='all', _activeChat=null, _revenueChart=null;
+let _packs=[], _packsFilter='all', _packsSearch='', _accountsPage=0, _accountsPerPage=20;
 const STATUT = {
   'en_attente_confirmation': {label:'En attente',    cls:'pill-gray'},
   'en_attente_paiement':     {label:'💳 Paiement',  cls:'pill-orange'},
@@ -1945,80 +2092,120 @@ async function loadAccounts(){
 async function loadPacks(){
   try{
     const r=await fetch('/api/packs'); const d=await r.json();
-    const packs=d.packs||[];
-    // Compteurs
-    const sansTel=packs.filter(p=>p.status==='available').length;
-    const full=packs.filter(p=>p.status==='full'||p.status==='grab_ready').length;
-    const used=packs.filter(p=>p.status==='used').length;
+    _packs=d.packs||[];
+    // Compteurs globaux (sur tous les packs, pas filtrés)
+    const sansTel=_packs.filter(p=>p.status==='available').length;
+    const full=_packs.filter(p=>p.status==='full'||p.status==='grab_ready').length;
+    const used=_packs.filter(p=>p.status==='used').length;
     if($('packsDispo'))  $('packsDispo').textContent=sansTel;
     if($('packsEnCours'))$('packsEnCours').textContent=full;
     if($('packsReady'))  $('packsReady').textContent=used;
-    if($('packCount'))   $('packCount').textContent=packs.length;
-    // Table
-    const tbody=document.getElementById('packsTable'); if(!tbody)return;
-    if(!packs.length){tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:24px">📭 Aucun email — cliquez sur "+ Emails"</td></tr>`;return;}
-    const STATUS_PACK={
-      'full':      '<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Compte full</span>',
-      'used':      '<span class="pill" style="background:#1e293b;color:#64748b">✓ Utilisé</span>',
-      'available': '<span class="pill pill-orange">📧 Sans numéro</span>',
-      'failed':    '<span class="pill pill-red">❌ Échoué</span>',
-      'grab_ready':'<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Compte full</span>',
-    };
-    tbody.innerHTML=packs.map(p=>{
-      const e=escHtml(p.email||'');
-      const emailRaw=p.email||'';
-      const name=escHtml(p.full_name||`${p.prenom} ${p.nom}`);
-      const nameRaw=p.full_name||`${p.prenom} ${p.nom}`;
-      const addrFull=p.bangkok_addr||'';
-      const addr=escHtml(addrFull.slice(0,50));
-      const phone=p.phone||'';
-      const pass='114722165uLCL';
-      const status=p.status||'available';
-      const badge=STATUS_PACK[status]||`<span class="pill">${status}</span>`;
-      const errTip=p._last_error?`title="${escHtml(p._last_error)}"`:''
-      const failBadge=p._fail_count>0?`<span style="color:var(--orange);font-size:.7rem;margin-left:4px" ${errTip}>⚠ ${p._fail_count}x</span>`:'';
-      // Input phone inline (quand pas de numéro)
-      const phoneInput = status !== 'used' && status !== 'full' && status !== 'grab_ready'
-        ? `<div style="display:flex;gap:4px;margin-top:4px">
-             <input id="ph_${emailRaw.replace(/[@.]/g,'_')}" type="text" placeholder="+66XXXXXXXXX"
-               style="width:130px;padding:4px 8px;border:1px solid var(--s3);border-radius:6px;background:var(--s1);color:var(--t1);font-size:.75rem"
-               onkeydown="if(event.key==='Enter')savePhone('${emailRaw.replace(/'/g,"\\'")}')">
-             <button class="btn btn-primary btn-sm" style="font-size:.7rem;padding:3px 8px;background:#3b82f6"
-               onclick="savePhone('${emailRaw.replace(/'/g,"\\'")}')">💾</button>
-           </div>`
-        : '';
-      // Affichage numéro si full
-      const phoneDisplay = phone && (status === 'full' || status === 'grab_ready')
-        ? `<div style="font-family:monospace;font-size:.72rem;color:var(--green);margin-top:2px">📱 ${escHtml(phone)}</div>`
-        : '';
-      // Bouton marquer utilisé
-      const usedBtn = (status === 'full' || status === 'grab_ready')
-        ? `<button class="btn btn-secondary btn-sm" style="font-size:.7rem;padding:3px 7px;margin-left:4px" onclick="markUsed('${emailRaw.replace(/'/g,"\\'")}')">✓ Utilisé</button>`
-        : '';
-      // Bouton copier
-      const copyBtn=`<button class="btn btn-secondary btn-sm" style="font-size:.7rem;padding:3px 7px" onclick='copyPackData(${JSON.stringify({email:emailRaw,name:nameRaw,addr:addrFull,pass,phone})})' title="Copier toutes les données">📋</button>`;
-      return `<tr>
-        <td style="padding:0 6px;color:var(--t3)">•</td>
-        <td style="font-size:.77rem">
-          <div class="mono" style="color:var(--purple)">${e}</div>
-          ${phoneDisplay}
-          ${phoneInput}
-        </td>
-        <td style="font-size:.82rem">
-          <div style="font-weight:600;color:var(--t1)">${name}</div>
-          <div style="color:var(--t3);font-size:.72rem">🇫🇷 · 🔑 <span class="mono">${pass}</span></div>
-        </td>
-        <td style="font-size:.74rem;color:var(--t3);max-width:220px" title="${escHtml(addrFull)}">
-          📍 ${addr}${addrFull.length>50?'…':''}
-        </td>
-        <td>${badge}${failBadge}</td>
-        <td>${copyBtn}${usedBtn}</td>
-      </tr>`;
-    }).join('');
+    if($('packCount'))   $('packCount').textContent=_packs.length;
+    renderPacks();
   }catch(ex){
     const tbody=document.getElementById('packsTable');
     if(tbody)tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--red);padding:16px">Erreur: ${ex.message}</td></tr>`;
   }
+}
+function filteredPacks(){
+  let packs=_packs;
+  if(_packsFilter!=='all') packs=packs.filter(p=>p.status===_packsFilter);
+  const q=_packsSearch.toLowerCase();
+  if(q) packs=packs.filter(p=>
+    (p.email||'').toLowerCase().includes(q)||
+    (p.full_name||'').toLowerCase().includes(q)||
+    (p.prenom||'').toLowerCase().includes(q)||
+    (p.nom||'').toLowerCase().includes(q)||
+    (p.bangkok_addr||'').toLowerCase().includes(q)
+  );
+  return packs;
+}
+function setPackFilter(el,f){
+  document.querySelectorAll('#page-accounts .filter-pill').forEach(p=>p.classList.remove('active'));
+  el.classList.add('active'); _packsFilter=f; _accountsPage=0; renderPacks();
+}
+function onPacksSearch(){
+  _packsSearch=document.getElementById('packsSearch')?.value||'';
+  _accountsPage=0; renderPacks();
+}
+function packsChangePage(dir){
+  const packs=filteredPacks();
+  const totalPages=Math.ceil(packs.length/_accountsPerPage)||1;
+  _accountsPage=Math.max(0,Math.min(_accountsPage+dir,totalPages-1));
+  renderPacks();
+}
+function renderPacks(){
+  const tbody=document.getElementById('packsTable'); if(!tbody)return;
+  const packs=filteredPacks();
+  const totalPages=Math.ceil(packs.length/_accountsPerPage)||1;
+  if(_accountsPage>=totalPages) _accountsPage=Math.max(0,totalPages-1);
+  const start=_accountsPage*_accountsPerPage;
+  const pagePacks=packs.slice(start,start+_accountsPerPage);
+  // Pagination info
+  const infoEl=$('packsPageInfo');
+  if(infoEl) infoEl.textContent=packs.length?`Affichage ${start+1}–${Math.min(start+_accountsPerPage,packs.length)} sur ${packs.length} comptes`:'0 comptes';
+  const prevBtn=$('packsPrev'); const nextBtn=$('packsNext');
+  if(prevBtn) prevBtn.disabled=_accountsPage===0;
+  if(nextBtn) nextBtn.disabled=_accountsPage>=totalPages-1;
+  if(!packs.length){tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--t3);padding:24px">📭 Aucun email — cliquez sur "+ Emails"</td></tr>`;return;}
+  const STATUS_PACK={
+    'full':      '<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Compte full</span>',
+    'used':      '<span class="pill" style="background:#1e293b;color:#64748b">✓ Utilisé</span>',
+    'available': '<span class="pill pill-orange">📧 Sans numéro</span>',
+    'failed':    '<span class="pill pill-red">❌ Échoué</span>',
+    'grab_ready':'<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Compte full</span>',
+  };
+  tbody.innerHTML=pagePacks.map(p=>{
+    const e=escHtml(p.email||'');
+    const emailRaw=p.email||'';
+    const name=escHtml(p.full_name||`${p.prenom} ${p.nom}`);
+    const nameRaw=p.full_name||`${p.prenom} ${p.nom}`;
+    const addrFull=p.bangkok_addr||'';
+    const addr=escHtml(addrFull.slice(0,50));
+    const phone=p.phone||'';
+    const pass='114722165uLCL';
+    const status=p.status||'available';
+    const badge=STATUS_PACK[status]||`<span class="pill">${status}</span>`;
+    const errTip=p._last_error?`title="${escHtml(p._last_error)}"`:''
+    const failBadge=p._fail_count>0?`<span style="color:var(--orange);font-size:.7rem;margin-left:4px" ${errTip}>⚠ ${p._fail_count}x</span>`:'';
+    // Input phone inline (quand pas de numéro)
+    const phoneInput = status !== 'used' && status !== 'full' && status !== 'grab_ready'
+      ? `<div style="display:flex;gap:4px;margin-top:4px">
+           <input id="ph_${emailRaw.replace(/[@.]/g,'_')}" type="text" placeholder="+66XXXXXXXXX"
+             style="width:130px;padding:4px 8px;border:1px solid var(--s3);border-radius:6px;background:var(--s1);color:var(--t1);font-size:.75rem"
+             onkeydown="if(event.key==='Enter')savePhone('${emailRaw.replace(/'/g,"\\'")}')">
+           <button class="btn btn-primary btn-sm" style="font-size:.7rem;padding:3px 8px;background:#3b82f6"
+             onclick="savePhone('${emailRaw.replace(/'/g,"\\'")}')">💾</button>
+         </div>`
+      : '';
+    // Affichage numéro si full
+    const phoneDisplay = phone && (status === 'full' || status === 'grab_ready')
+      ? `<div style="font-family:monospace;font-size:.72rem;color:var(--green);margin-top:2px">📱 ${escHtml(phone)}</div>`
+      : '';
+    // Bouton marquer utilisé
+    const usedBtn = (status === 'full' || status === 'grab_ready')
+      ? `<button class="btn btn-secondary btn-sm" style="font-size:.7rem;padding:3px 7px;margin-left:4px" onclick="markUsed('${emailRaw.replace(/'/g,"\\'")}')">✓ Utilisé</button>`
+      : '';
+    // Bouton copier
+    const copyBtn=`<button class="btn btn-secondary btn-sm" style="font-size:.7rem;padding:3px 7px" onclick='copyPackData(${JSON.stringify({email:emailRaw,name:nameRaw,addr:addrFull,pass,phone})})' title="Copier toutes les données">📋</button>`;
+    return `<tr>
+      <td style="padding:0 6px;color:var(--t3)">•</td>
+      <td style="font-size:.77rem">
+        <div class="mono" style="color:var(--purple)">${e}</div>
+        ${phoneDisplay}
+        ${phoneInput}
+      </td>
+      <td style="font-size:.82rem">
+        <div style="font-weight:600;color:var(--t1)">${name}</div>
+        <div style="color:var(--t3);font-size:.72rem">🇫🇷 · 🔑 <span class="mono">${pass}</span></div>
+      </td>
+      <td style="font-size:.74rem;color:var(--t3);max-width:220px" title="${escHtml(addrFull)}">
+        📍 ${addr}${addrFull.length>50?'…':''}
+      </td>
+      <td>${badge}${failBadge}</td>
+      <td>${copyBtn}${usedBtn}</td>
+    </tr>`;
+  }).join('');
 }
 function copyPackData(p){
   const lines=['📧 Email    : '+p.email,'👤 Nom      : '+p.name,'📍 Adresse  : '+p.addr,'🔑 MDP      : '+p.pass];
@@ -2057,6 +2244,43 @@ async function toggleAccountStatus(email,status){
   await fetch('/api/accounts/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,status,grab_phone:''})});
   toast(status==='used'?'🔗 Marqué comme utilisé':'✅ Libéré');
   await loadAccounts();
+}
+
+// ── TARIFS ────────────────────────────────────────────────
+let _tarifs=[];
+async function loadTarifs(){
+  try{
+    const r=await fetch('/api/config'); const d=await r.json();
+    _tarifs=d.budgets||[];
+    renderTarifs();
+  }catch(e){}
+}
+function renderTarifs(){
+  const tbody=$('tarifsBody'); if(!tbody)return;
+  if(!_tarifs.length){tbody.innerHTML='<tr><td colspan="3" style="color:var(--t3);padding:12px">Aucun tarif</td></tr>';return;}
+  tbody.innerHTML=_tarifs.map((b,i)=>`
+    <tr>
+      <td style="padding:8px 12px"><input class="input" type="number" id="t_panier_${i}" value="${b.panier||0}" style="width:100px"></td>
+      <td style="padding:8px 12px"><input class="input" type="number" id="t_prix_${i}" value="${b.prix||0}" style="width:100px"></td>
+      <td style="padding:8px 12px"><input class="input" type="text" id="t_wise_${i}" value="${escHtml(b.wise||'')}" style="width:100%;max-width:380px"></td>
+    </tr>`).join('');
+}
+async function saveTarifs(){
+  const budgets=_tarifs.map((_,i)=>({
+    panier:parseInt($('t_panier_'+i)?.value)||0,
+    prix:  parseInt($('t_prix_'+i)?.value)||0,
+    wise:  $('t_wise_'+i)?.value?.trim()||'',
+  }));
+  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({budgets})});
+  const d=await r.json();
+  if(d.ok){toast('✅ Tarifs sauvegardés !');_tarifs=d.config.budgets;renderTarifs();}
+  else toast('❌ Erreur : '+(d.msg||'?'),false);
+}
+async function doBackup(){
+  toast('⏳ Backup en cours…');
+  const r=await fetch('/api/backup',{method:'POST'});
+  const d=await r.json();
+  toast(d.ok?'✅ Backup envoyé sur Telegram !':'❌ Erreur backup',d.ok);
 }
 
 // ── GENERATE MODAL ────────────────────────────────────────
@@ -2213,7 +2437,7 @@ async function refresh(){
 }
 async function refreshAll(){
   await refresh();
-  await Promise.all([loadDispo(), loadBotStatus(), loadRestoCount()]);
+  await Promise.all([loadDispo(), loadBotStatus(), loadRestoCount(), loadTarifs()]);
   // iCloud count mini-card (quick update without full accounts reload)
   try{
     const r=await fetch('/api/accounts'); const d=await r.json();
@@ -2249,6 +2473,8 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=int(os.environ.get("DASHBOARD_PORT", 5001)))
     a = p.parse_args()
+    # Initialise config.json avec les valeurs par défaut si absent
+    get_config()
     # Importe au démarrage les emails déjà générés mais pas encore dans accounts.json
     _reload_accounts()
     # Active l'auto-génération dès le démarrage (5 emails toutes les 65 min)
