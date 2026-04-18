@@ -1364,7 +1364,7 @@ def employe_page():
         })
 
     accounts_json = json.dumps(accounts, ensure_ascii=False)
-    return render_template_string(EMPLOYE_PAGE, accounts_json=accounts_json)
+    return render_template_string(EMPLOYE_PAGE, accounts=accounts, accounts_json=accounts_json)
 
 @app.route("/employe/login", methods=["GET"])
 def employe_login_page():
@@ -3086,7 +3086,7 @@ tr:last-child td{border:none}
   <div class="table-wrap">
     <div class="table-header">
       <span class="table-title">📦 Comptes disponibles</span>
-      <span class="pill pill-blue" id="countBadge" style="margin-left:8px">0</span>
+      <span class="pill pill-blue" id="countBadge" style="margin-left:8px">{{ accounts|length }}</span>
       <button class="btn btn-secondary btn-sm" style="margin-left:auto" onclick="loadAccounts()">🔄 Actualiser</button>
     </div>
     <table>
@@ -3100,7 +3100,32 @@ tr:last-child td{border:none}
         </tr>
       </thead>
       <tbody id="accountsTable">
-        <tr><td colspan="5" class="loading">Chargement…</td></tr>
+        {% for a in accounts %}
+        <tr>
+          <td><div class="mono" style="color:var(--purple)">{{ a.email }}</div></td>
+          <td>
+            <div style="font-weight:600;color:var(--t1)">{{ a.full_name }}</div>
+            <div style="font-size:.72rem;color:var(--t3)">🔑 <span class="mono">Grab2024lol!</span></div>
+            {% if a.phone %}<div style="font-size:.72rem;color:var(--green);margin-top:2px">📱 {{ a.phone }}</div>{% endif %}
+          </td>
+          <td style="font-size:.74rem;color:var(--t3)">📍 {{ a.bangkok_addr[:55] }}{% if a.bangkok_addr|length > 55 %}…{% endif %}</td>
+          <td>
+            {% if a.status == 'available' %}<span class="pill pill-orange">📧 Disponible</span>
+            {% elif a.status == 'claimed' %}<span class="pill pill-blue">🔒 En cours</span>
+            {% elif a.status in ('full','grab_ready') %}<span class="pill pill-green">✅ Prêt</span>
+            {% else %}<span class="pill pill-gray">{{ a.status }}</span>{% endif %}
+          </td>
+          <td>
+            {% if a.status == 'available' %}
+              <button class="btn btn-primary btn-sm" onclick="claimAccount('{{ a.email }}')">🤚 Prendre en charge</button>
+            {% elif a.claimed_by %}
+              <button class="btn btn-blue btn-sm" onclick="openPanel('{{ a.email }}')">⚙️ Gérer</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5"><div class="empty">📭 Aucun compte disponible</div></td></tr>
+        {% endfor %}
       </tbody>
     </table>
   </div>
