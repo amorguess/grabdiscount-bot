@@ -1113,8 +1113,11 @@ def api_orch_status():
 @app.route("/api/orch/devices")
 @auth
 def api_orch_devices():
-    from grab_gen.orchestrator import get_adb_devices
-    return jsonify({"devices": get_adb_devices()})
+    try:
+        from grab_gen.orchestrator import get_adb_devices
+        return jsonify({"devices": get_adb_devices()})
+    except ImportError:
+        return jsonify({"devices": [], "error": "grab_gen non disponible sur ce serveur"})
 
 @app.route("/api/grabgen/config", methods=["GET", "POST"])
 @auth
