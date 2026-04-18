@@ -245,10 +245,19 @@ class ICloudHME:
 # ─────────────────────────────────────────
 async def cmd_generate():
     cookies = load_cookies()
-    try:
-        n = int(input("\n📧 Combien d'emails à générer ? (max 25 recommandé) : ").strip())
-    except ValueError:
-        n = 5
+    # Accepte le count depuis sys.argv[2] (ex: python3 run.py generate 5)
+    # Sinon demande interactivement
+    if len(sys.argv) > 2:
+        try:
+            n = int(sys.argv[2])
+            print(f"\n📧 Génération de {n} email(s)...")
+        except ValueError:
+            n = 5
+    else:
+        try:
+            n = int(input("\n📧 Combien d'emails à générer ? (max 25 recommandé) : ").strip())
+        except (ValueError, EOFError):
+            n = 5
 
     all_emails = []
     async with ICloudHME(cookies) as hme:

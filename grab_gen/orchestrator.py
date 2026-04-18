@@ -280,7 +280,7 @@ async def worker(device_id: str):
             from identity_gen import generate_identity as _gen_id, get_bangkok_address
             ident           = _gen_id(seed=email)
             bangkok_address = get_bangkok_address(seed=email)
-            password        = "114722165uLCL"   # mot de passe fixe tous comptes
+            password        = "Grab2024lol!"   # mot de passe fixe tous comptes
 
             slog(f"[{device_id}] Identite : {ident['full_name']}")
             slog(f"[{device_id}] Adresse  : {bangkok_address[:60]}…")

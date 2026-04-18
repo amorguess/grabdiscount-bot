@@ -407,7 +407,7 @@ def api_packs_mark_created():
             a["status"]            = "grab_ready"
             a["grab_phone"]        = phone
             a["grab_created"]      = datetime.datetime.now().isoformat()
-            a["grab_password"]     = "114722165uLCL"
+            a["grab_password"]     = "Grab2024lol!"
             a["grab_name"]         = ident.get("full_name", "")
             a["grab_prenom"]       = ident.get("prenom", "")
             a["grab_nom"]          = ident.get("nom", "")
@@ -1313,8 +1313,9 @@ def api_employe_accounts():
     for a in accounts:
         status = a.get("status", "available")
         claimed_by = a.get("claimed_by")
-        # Montrer : disponibles + ceux pris en charge par cet employé
-        if status in ("available",) and not claimed_by:
+        # Montrer : disponibles (sans numéro) + ceux pris en charge par cet employé
+        no_phone = not a.get("grab_phone", "").strip()
+        if status in ("available", "full", None, "") and not claimed_by and no_phone:
             pass  # inclure
         elif claimed_by == employe_id:
             pass  # inclure
@@ -1341,7 +1342,7 @@ def api_employe_accounts():
             "nom": a.get("grab_nom") or ident.get("nom", ""),
             "full_name": a.get("grab_name") or ident.get("full_name", ""),
             "bangkok_addr": a.get("grab_bangkok_addr") or addr,
-            "password": "114722165uLCL",
+            "password": "Grab2024lol!",
             "phone": a.get("grab_phone", ""),
             "created_at": a.get("created", ""),
         })
@@ -1440,7 +1441,7 @@ def api_employe_validate():
             a["claimed_by"] = None
             a["claimed_at"] = None
             a["grab_created"] = datetime.datetime.now().isoformat()
-            a["grab_password"] = "114722165uLCL"
+            a["grab_password"] = "Grab2024lol!"
             a["grab_name"] = ident.get("full_name", "")
             a["grab_prenom"] = ident.get("prenom", "")
             a["grab_nom"] = ident.get("nom", "")
@@ -2507,7 +2508,7 @@ function renderPacks(){
     const addrFull=p.bangkok_addr||'';
     const addr=escHtml(addrFull.slice(0,50));
     const phone=p.phone||'';
-    const pass='114722165uLCL';
+    const pass='Grab2024lol!';
     const status=p.status||'available';
     const badge=STATUS_PACK[status]||`<span class="pill">${status}</span>`;
     const errTip=p._last_error?`title="${escHtml(p._last_error)}"`:''
@@ -2984,7 +2985,7 @@ tr:last-child td{border:none}
   </div>
 
   <div style="margin-top:14px;font-size:.76rem;color:var(--t3);text-align:right">
-    Mot de passe Grab par défaut : <span class="mono" style="color:var(--t2)">114722165uLCL</span>
+    Mot de passe Grab par défaut : <span class="mono" style="color:var(--t2)">Grab2024lol!</span>
   </div>
 </div>
 
@@ -3112,7 +3113,7 @@ function renderAccounts(){
       </td>
       <td>
         <div style="font-weight:600;color:var(--t1)">${name}</div>
-        <div style="font-size:.72rem;color:var(--t3)">🔑 <span class="mono">114722165uLCL</span></div>
+        <div style="font-size:.72rem;color:var(--t3)">🔑 <span class="mono">Grab2024lol!</span></div>
         ${hasPhone ? `<div style="font-size:.72rem;color:var(--green);margin-top:2px">📱 ${escHtml(a.phone)}</div>` : ''}
       </td>
       <td style="font-size:.74rem;color:var(--t3)" title="${escHtml(addrFull)}">📍 ${addr}${addrFull.length > 55 ? '…' : ''}</td>
@@ -3153,8 +3154,8 @@ function renderPanel(acc){
       <div style="display:flex;flex-direction:column;gap:6px;font-size:.83rem">
         <div><span style="color:var(--t3)">Nom complet :</span> <span style="color:var(--t1);font-weight:600">${escHtml(acc.full_name||`${acc.prenom} ${acc.nom}`)}</span></div>
         <div><span style="color:var(--t3)">Adresse :</span> <span style="color:var(--t2);font-size:.78rem">${escHtml(acc.bangkok_addr||'')}</span></div>
-        <div><span style="color:var(--t3)">Mot de passe :</span> <span class="mono" style="color:var(--cyan)">114722165uLCL</span>
-          <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="copyText('114722165uLCL')">📋</button>
+        <div><span style="color:var(--t3)">Mot de passe :</span> <span class="mono" style="color:var(--cyan)">Grab2024lol!</span>
+          <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="copyText('Grab2024lol!')">📋</button>
         </div>
         <div><span style="color:var(--t3)">Email iCloud :</span> <span class="mono" style="color:var(--purple)">${escHtml(email)}</span>
           <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="copyText('${escHtml(email)}')">📋</button>

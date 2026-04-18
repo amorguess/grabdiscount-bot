@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🛵 GrabDiscount — Guide Terminal</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    padding: 30px 20px;
+    line-height: 1.6;
+  }
+  h1 {
+    font-size: 2.2rem;
+    text-align: center;
+    margin-bottom: 8px;
+    color: #fff;
+  }
+  .subtitle {
+    text-align: center;
+    color: #94a3b8;
+    margin-bottom: 40px;
+    font-size: 1rem;
+  }
+  .section {
+    background: #1e2130;
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 28px;
+    border: 1px solid #2d3148;
+  }
+  .section-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #fff;
+  }
+  .step {
+    margin-bottom: 20px;
+  }
+  .step-label {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-bottom: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .cmd {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
+    font-size: 1.05rem;
+    color: #4ade80;
+    position: relative;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    user-select: all;
+    word-break: break-all;
+  }
+  .cmd:hover { border-color: #4ade80; }
+  .cmd::before {
+    content: '$ ';
+    color: #64748b;
+  }
+  .cmd.no-dollar::before { content: ''; }
+  .cmd-comment {
+    color: #64748b;
+    font-size: 0.85rem;
+    margin-top: 6px;
+    padding-left: 4px;
+  }
+  .copy-hint {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.7rem;
+    color: #4ade80;
+    opacity: 0;
+    transition: opacity 0.2s;
+    font-family: sans-serif;
+  }
+  .cmd:hover .copy-hint { opacity: 1; }
+  .info-box {
+    background: #1a2535;
+    border: 1px solid #2563eb44;
+    border-left: 4px solid #3b82f6;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    font-size: 0.95rem;
+  }
+  .warn-box {
+    background: #251a10;
+    border: 1px solid #f59e0b44;
+    border-left: 4px solid #f59e0b;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    font-size: 0.95rem;
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media(max-width: 640px) {
+    .grid2 { grid-template-columns: 1fr; }
+    h1 { font-size: 1.6rem; }
+  }
+  .tag {
+    display: inline-block;
+    background: #1e3a5f;
+    color: #60a5fa;
+    border-radius: 6px;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .tag.green { background: #14532d; color: #4ade80; }
+  .tag.orange { background: #431407; color: #fb923c; }
+  .creds-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .creds-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid #2d3148;
+    font-size: 0.95rem;
+  }
+  .creds-table td:first-child {
+    color: #94a3b8;
+    width: 40%;
+    font-weight: 600;
+  }
+  .creds-table td:last-child {
+    font-family: 'SF Mono', monospace;
+    color: #4ade80;
+    font-size: 0.9rem;
+  }
+  .number {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    background: #3b82f6;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+  }
+  .step-row {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    margin-bottom: 18px;
+  }
+  .step-content { flex: 1; }
+</style>
+</head>
+<body>
+
+<h1>🛵 GrabDiscount</h1>
+<p class="subtitle">Guide terminal · VPS · Dashboard</p>
+
+<!-- ─── INFOS CLÉS ─── -->
+<div class="section">
+  <div class="section-title">🔑 Infos clés</div>
+  <table class="creds-table">
+    <tr><td>IP du VPS</td><td>82.197.70.190</td></tr>
+    <tr><td>Dashboard</td><td>http://82.197.70.190:5001</td></tr>
+    <tr><td>Mot de passe dashboard</td><td>voir .env sur le VPS</td></tr>
+    <tr><td>Code sur ton Mac</td><td>/Users/donamor/grab/</td></tr>
+    <tr><td>Code sur le VPS</td><td>/root/grabdiscount/</td></tr>
+    <tr><td>Données sur le VPS</td><td>/data/</td></tr>
+    <tr><td>GitHub</td><td>github.com/amorguess/grabdiscount-bot</td></tr>
+  </table>
+</div>
+
+<!-- ─── SE CONNECTER AU VPS ─── -->
+<div class="section">
+  <div class="section-title">🔗 Se connecter au VPS</div>
+
+  <div class="warn-box">
+    ⚠️ Tu dois ouvrir le <strong>Terminal</strong> sur ton Mac d'abord (pas depuis une session déjà ouverte sur le VPS)
+  </div>
+
+  <div class="step">
+    <div class="step-label">Ouvrir une connexion SSH</div>
+    <div class="cmd">ssh root@82.197.70.190<span class="copy-hint">cliquer pour copier</span></div>
+    <div class="cmd-comment">→ Entre ton mot de passe Contabo (le curseur ne bouge pas, c'est normal)</div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Quitter le VPS et revenir sur ton Mac</div>
+    <div class="cmd">exit<span class="copy-hint">cliquer pour copier</span></div>
+  </div>
+</div>
+
+<!-- ─── COMMANDES VPS ─── -->
+<div class="section">
+  <div class="section-title">⚙️ Commandes sur le VPS</div>
+  <div class="info-box">📌 D'abord te connecter : <code style="color:#4ade80">ssh root@82.197.70.190</code></div>
+
+  <div class="step">
+    <div class="step-label">Voir les logs en direct (pour voir ce qui se passe)</div>
+    <div class="cmd">journalctl -u grabdiscount -f<span class="copy-hint">cliquer pour copier</span></div>
+    <div class="cmd-comment">→ Ctrl+C pour arrêter</div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Redémarrer le bot + dashboard</div>
+    <div class="cmd">systemctl restart grabdiscount<span class="copy-hint">cliquer pour copier</span></div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Vérifier si ça tourne</div>
+    <div class="cmd">systemctl status grabdiscount<span class="copy-hint">cliquer pour copier</span></div>
+    <div class="cmd-comment">→ Tu dois voir "active (running)" en vert</div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Mettre à jour le code depuis GitHub</div>
+    <div class="cmd">cd /root/grabdiscount && git pull origin main && systemctl restart grabdiscount<span class="copy-hint">cliquer pour copier</span></div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Voir les fichiers de données</div>
+    <div class="cmd">ls /data/<span class="copy-hint">cliquer pour copier</span></div>
+  </div>
+</div>
+
+<!-- ─── DÉPLOYER UNE MODIFICATION ─── -->
+<div class="section">
+  <div class="section-title">🚀 Déployer une modification de code</div>
+
+  <div class="step-row">
+    <span class="number">1</span>
+    <div class="step-content">
+      <div class="step-label">Sur ton Mac — sauvegarder et envoyer sur GitHub</div>
+      <div class="cmd">cd /Users/donamor/grab<span class="copy-hint">cliquer pour copier</span></div>
+      <div class="cmd" style="margin-top:8px">git add -A && git commit -m "ma modif" && git push origin main<span class="copy-hint">cliquer pour copier</span></div>
+    </div>
+  </div>
+
+  <div class="step-row">
+    <span class="number">2</span>
+    <div class="step-content">
+      <div class="step-label">Sur le VPS — télécharger et redémarrer</div>
+      <div class="cmd">ssh root@82.197.70.190<span class="copy-hint">cliquer pour copier</span></div>
+      <div class="cmd" style="margin-top:8px">cd /root/grabdiscount && git pull origin main && systemctl restart grabdiscount<span class="copy-hint">cliquer pour copier</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── TRANSFERT DE FICHIERS ─── -->
+<div class="section">
+  <div class="section-title">📤 Envoyer un fichier Mac → VPS</div>
+  <div class="warn-box">⚠️ Ces commandes se tapent sur ton Mac, PAS depuis le VPS</div>
+
+  <div class="step">
+    <div class="step-label">Envoyer accounts.json</div>
+    <div class="cmd">scp /Users/donamor/grab/accounts.json root@82.197.70.190:/data/<span class="copy-hint">cliquer pour copier</span></div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">Envoyer le cookie iCloud</div>
+    <div class="cmd">scp /Users/donamor/grab/icloud_gen/cookie.txt root@82.197.70.190:/root/grabdiscount/icloud_gen/<span class="copy-hint">cliquer pour copier</span></div>
+    <div class="cmd-comment">→ À faire tous les 2-3 jours quand la génération d'emails tombe en erreur</div>
+  </div>
+</div>
+
+<!-- ─── STRUCTURE DES FICHIERS ─── -->
+<div class="section">
+  <div class="section-title">📂 Ce que fait chaque fichier</div>
+
+  <div class="grid2">
+    <div>
+      <div class="tag">Fichiers principaux</div>
+      <table class="creds-table" style="margin-top:10px">
+        <tr><td>start.py</td><td style="color:#e2e8f0;font-family:sans-serif">Lance tout au démarrage</td></tr>
+        <tr><td>dashboard.py</td><td style="color:#e2e8f0;font-family:sans-serif">Interface web admin</td></tr>
+        <tr><td>bot.py</td><td style="color:#e2e8f0;font-family:sans-serif">Bot Telegram clients</td></tr>
+        <tr><td>.env</td><td style="color:#e2e8f0;font-family:sans-serif">Tokens & mots de passe</td></tr>
+      </table>
+    </div>
+    <div>
+      <div class="tag green">Modules</div>
+      <table class="creds-table" style="margin-top:10px">
+        <tr><td>icloud_gen/</td><td style="color:#e2e8f0;font-family:sans-serif">Génère emails Apple</td></tr>
+        <tr><td>identity_gen/</td><td style="color:#e2e8f0;font-family:sans-serif">Génère identités FR</td></tr>
+        <tr><td>sms_gen/</td><td style="color:#e2e8f0;font-family:sans-serif">Achète numéros SMS</td></tr>
+        <tr><td>grab_gen/</td><td style="color:#e2e8f0;font-family:sans-serif">Automate Grab (ADB)</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div style="margin-top:20px">
+    <div class="tag orange">Données sur le VPS /data/</div>
+    <table class="creds-table" style="margin-top:10px">
+      <tr><td>accounts.json</td><td style="color:#e2e8f0;font-family:sans-serif">Tous les comptes Grab créés</td></tr>
+      <tr><td>orders.json</td><td style="color:#e2e8f0;font-family:sans-serif">Toutes les commandes clients</td></tr>
+      <tr><td>messages.json</td><td style="color:#e2e8f0;font-family:sans-serif">Conversations Telegram</td></tr>
+      <tr><td>status.json</td><td style="color:#e2e8f0;font-family:sans-serif">Statut bot (dispo/pause)</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ─── DÉPANNAGE ─── -->
+<div class="section">
+  <div class="section-title">🆘 Problème → Solution</div>
+
+  <div class="step-row">
+    <span style="font-size:1.4rem">❌</span>
+    <div class="step-content">
+      <div class="step-label">Dashboard inaccessible / Bot hors ligne</div>
+      <div class="cmd">ssh root@82.197.70.190<span class="copy-hint">cliquer pour copier</span></div>
+      <div class="cmd" style="margin-top:8px">systemctl restart grabdiscount<span class="copy-hint">cliquer pour copier</span></div>
+    </div>
+  </div>
+
+  <div class="step-row">
+    <span style="font-size:1.4rem">❌</span>
+    <div class="step-content">
+      <div class="step-label">Génération email échoue (cookie expiré)</div>
+      <div class="cmd-comment" style="margin-bottom:8px">→ Renouveler cookie.txt depuis Safari icloud.com, puis :</div>
+      <div class="cmd">scp /Users/donamor/grab/icloud_gen/cookie.txt root@82.197.70.190:/root/grabdiscount/icloud_gen/<span class="copy-hint">cliquer pour copier</span></div>
+    </div>
+  </div>
+
+  <div class="step-row">
+    <span style="font-size:1.4rem">❌</span>
+    <div class="step-content">
+      <div class="step-label">Comprendre une erreur — voir les logs</div>
+      <div class="cmd">journalctl -u grabdiscount -f<span class="copy-hint">cliquer pour copier</span></div>
+    </div>
+  </div>
+</div>
+
+<p style="text-align:center;color:#475569;font-size:0.85rem;margin-top:10px">Créé le 18 avril 2026 · GrabDiscount VPS Guide</p>
+
+<script>
+  // Copie dans le presse-papier au clic
+  document.querySelectorAll('.cmd').forEach(el => {
+    el.addEventListener('click', () => {
+      const text = el.innerText.replace(/^[$] /, '').replace('cliquer pour copier', '').trim();
+      navigator.clipboard.writeText(text).then(() => {
+        const hint = el.querySelector('.copy-hint');
+        if (hint) { hint.textContent = '✅ Copié !'; setTimeout(() => hint.textContent = 'cliquer pour copier', 1500); }
+      });
+    });
+  });
+</script>
+</body>
+</html>
