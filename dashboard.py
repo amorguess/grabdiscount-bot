@@ -1614,18 +1614,25 @@ function nav(p){
   // Mobile nav sync
   document.querySelectorAll('.mobile-nav-item').forEach(el=>el.classList.remove('active'));
   document.getElementById('mnav-'+p)?.classList.add('active');
-  ['overview','orders','chat','accounts','terminal'].forEach(id=>{
+  // Terminal garde son état — on utilise visibility au lieu de display
+  ['overview','orders','chat','accounts'].forEach(id=>{
     const el=document.getElementById('page-'+id);
     if(el) el.style.display=id===p?(id==='overview'?'block':'flex'):'none';
   });
+  // Terminal : chargé une seule fois, caché/montré sans rechargement
+  const termEl=document.getElementById('page-terminal');
+  if(termEl){
+    if(p==='terminal'){
+      termEl.style.display='flex';
+      const fr=document.getElementById('terminalFrame');
+      if(fr&&fr.src==='about:blank') fr.src='http://82.197.70.190:8081';
+    } else {
+      termEl.style.display='none';
+    }
+  }
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
   if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList();}
   if(p==='accounts'){document.getElementById('page-accounts').style.display='block'; loadPacks(); loadAutoGen(); orchStartPolling();}
-  if(p==='terminal'){
-    document.getElementById('page-terminal').style.display='flex';
-    const fr=document.getElementById('terminalFrame');
-    if(fr&&fr.src==='about:blank') fr.src='http://82.197.70.190:8081';
-  }
   // Scroll top on mobile
   window.scrollTo(0,0);
   _page=p;
