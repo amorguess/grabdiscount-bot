@@ -1320,9 +1320,51 @@ def employe_diag():
 
 @app.route("/employe", methods=["GET"])
 def employe_page():
-    if request.cookies.get("emp_tok") == _EMP_TOKEN:
-        return render_template_string(EMPLOYE_PAGE)
-    return redirect("/employe/login")
+    if request.cookies.get("emp_tok") != _EMP_TOKEN:
+        return redirect("/employe/login")
+
+    import sys as _sys
+    _sys.path.insert(0, str(_CODE_DIR))
+    try:
+        from identity_gen import generate_identity, get_bangkok_address
+    except ImportError:
+        generate_identity = None
+        get_bangkok_address = None
+
+    employe_id = _get_employe_id()
+    accounts_raw = rj(ACCOUNTS_F, [])
+    accounts = []
+    for a in accounts_raw:
+        status = a.get("status", "available")
+        claimed_by = a.get("claimed_by")
+        no_phone = not a.get("grab_phone", "").strip()
+        if status in ("available", "full", None, "") and not claimed_by and no_phone:
+            pass
+        elif claimed_by == employe_id:
+            pass
+        else:
+            continue
+        email = a.get("email", "")
+        if not email:
+            continue
+        try:
+            ident = generate_identity(seed=email) if generate_identity else {}
+            addr  = get_bangkok_address(seed=email) if get_bangkok_address else ""
+        except Exception:
+            ident = {"prenom": "?", "nom": "?", "full_name": "?"}
+            addr  = ""
+        accounts.append({
+            "email":       email,
+            "status":      status,
+            "claimed_by":  claimed_by,
+            "claimed_at":  a.get("claimed_at"),
+            "full_name":   a.get("grab_name") or ident.get("full_name", ""),
+            "bangkok_addr":a.get("grab_bangkok_addr") or addr,
+            "phone":       a.get("grab_phone", ""),
+        })
+
+    accounts_json = json.dumps(accounts, ensure_ascii=False)
+    return render_template_string(EMPLOYE_PAGE, accounts_json=accounts_json)
 
 @app.route("/employe/login", methods=["GET"])
 def employe_login_page():
@@ -3104,6 +3146,9 @@ tr:last-child td{border:none}
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
+// Données injectées côté serveur — pas de fetch nécessaire au chargement
+const _ACCOUNTS_INIT = {{ accounts_json | safe }};
+
 // Helper fetch — le cookie emp_tok est envoyé automatiquement par le navigateur
 function authFetch(url, opts={}){
   opts.credentials = 'include';
@@ -3155,6 +3200,7 @@ function filteredAccounts(){
 
 // ── LOAD ─────────────────────────────────────────────────
 async function loadAccounts(){
+  // Rechargement dynamique (bouton Actualiser)
   const tbody = $('accountsTable');
   try{
     const r = await authFetch('/api/employe/accounts');
@@ -3395,8 +3441,9 @@ function copyText(t){
 // ── LOGOUT ───────────────────────────────────────────────
 function logout(){ window.location.href = '/employe/logout'; }
 
-// ── INIT ─────────────────────────────────────────────────
-loadAccounts();
+// ── INIT — données déjà dans la page, rendu immédiat ─────
+_accounts = _ACCOUNTS_INIT;
+renderAccounts();
 setInterval(loadAccounts, 30000);
 </script>
 </body>
