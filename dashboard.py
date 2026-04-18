@@ -11,14 +11,22 @@ except ImportError:
     pass
 
 from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for, make_response
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+# Derrière Cloudflare + nginx : on fait confiance aux headers X-Forwarded-*
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_for=1)
+
 # Secret Flask : obligatoire depuis .env, jamais hardcodé
 _secret = os.environ.get("DASHBOARD_SECRET")
 if not _secret:
     import secrets as _s
-    _secret = _s.token_urlsafe(32)   # généré aléatoirement si absent → sessions sécurisées
+    _secret = _s.token_urlsafe(32)
 app.secret_key = _secret
+
+# Cookies sécurisés sur HTTPS
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"]   = False  # False car Flask voit HTTP (Cloudflare termine SSL)
 
 _CODE_DIR   = Path(__file__).parent                             # dossier du code
 BASE        = Path(os.environ.get("DATA_DIR", str(_CODE_DIR)))  # données → DATA_DIR si dispo
@@ -161,9 +169,11 @@ def auth(f):
     return wrap
 
 def emp_auth(f):
-    """Pas d'auth pour l'instant — accès direct."""
+    """Auth employé via cookie emp_tok (persistant 7j)."""
     @functools.wraps(f)
     def wrap(*a, **kw):
+        if request.cookies.get("emp_tok") != _EMP_TOKEN:
+            return jsonify({"ok": False, "error": "auth"}), 401
         return f(*a, **kw)
     return wrap
 
@@ -1310,7 +1320,9 @@ def employe_diag():
 
 @app.route("/employe", methods=["GET"])
 def employe_page():
-    return render_template_string(EMPLOYE_PAGE)
+    if request.cookies.get("emp_tok") == _EMP_TOKEN:
+        return render_template_string(EMPLOYE_PAGE)
+    return redirect("/employe/login")
 
 @app.route("/employe/login", methods=["GET"])
 def employe_login_page():
@@ -3146,6 +3158,7 @@ async function loadAccounts(){
   const tbody = $('accountsTable');
   try{
     const r = await authFetch('/api/employe/accounts');
+    if(r.status === 401){ window.location.href = '/employe/login'; return; }
     const d = await r.json();
     if(!d.ok){
       if(tbody) tbody.innerHTML=`<tr><td colspan="5"><div class="empty">❌ Erreur : ${d.error||'inconnue'}</div></td></tr>`;
