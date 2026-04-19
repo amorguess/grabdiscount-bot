@@ -227,7 +227,7 @@ def send_expiration_reminders() -> None:
     renew_markup = {
         "inline_keyboard": [[{
             "text": "🔄 Renouveler",
-            "url":  f"tg://user?id={ADMIN_ID}",
+            "url":  "https://t.me/Grabfoodeat",
         }]]
     }
 

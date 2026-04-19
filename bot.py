@@ -85,7 +85,7 @@ async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | No
     user = update.effective_user
     keyboard = [[InlineKeyboardButton(
         "📩 S'abonner — Contacter l'admin",
-        url=f"tg://user?id={ADMIN_CHAT_ID}",
+        url="https://t.me/Grabfoodeat",
     )]]
     await update.message.reply_text(
         "🛵 *Bienvenue sur GrabDiscount !*\n\n"
@@ -1078,7 +1078,7 @@ async def cmd_expire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             ),
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔄 Renouveler", url=f"tg://user?id={ADMIN_CHAT_ID}")
+                InlineKeyboardButton("🔄 Renouveler", url="https://t.me/Grabfoodeat")
             ]]),
         )
     except Exception:
