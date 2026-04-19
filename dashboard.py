@@ -553,13 +553,51 @@ def api_gen_start():
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"ok": True})
 
+def _make_unique_identity(email: str, used_names: set) -> dict:
+    """Génère une identité (prenom, nom) unique parmi les comptes existants."""
+    try:
+        from identity_gen import generate_identity, get_bangkok_address
+    except ImportError:
+        return {"grab_prenom": "", "grab_nom": "", "adresse_bangkok": ""}
+    suffix = 0
+    while True:
+        seed = email if suffix == 0 else f"{email}_{suffix}"
+        ident = generate_identity(seed=seed)
+        key = (ident["prenom"], ident["nom"])
+        if key not in used_names:
+            used_names.add(key)
+            adresse = get_bangkok_address(seed=seed)
+            return {
+                "grab_prenom":    ident["prenom"],
+                "grab_nom":       ident["nom"],
+                "adresse_bangkok": adresse,
+            }
+        suffix += 1
+        if suffix > 100:
+            used_names.add(key)
+            return {"grab_prenom": ident["prenom"], "grab_nom": ident["nom"], "adresse_bangkok": get_bangkok_address(seed=seed)}
+
+
 def _reload_accounts():
     """Importe tous les nouveaux emails dans accounts.json.
     Lit emails.txt (généré par cmd_generate) ET emails_export.txt (cmd_list).
+    Chaque nouveau compte reçoit immédiatement une identité unique + adresse Bangkok.
     """
     existing = {a["email"]: a for a in rj(ACCOUNTS_F, [])}
     now_ts = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     added = 0
+
+    # Noms déjà utilisés → garantit l'unicité des nouvelles identités
+    used_names = {(a.get("grab_prenom", ""), a.get("grab_nom", "")) for a in existing.values() if a.get("grab_prenom")}
+
+    def _new_account(email, ts):
+        entry = {
+            "email": email, "created": ts,
+            "status": "available", "grab_phone": "",
+            "grab_notes": "", "used_at": None,
+        }
+        entry.update(_make_unique_identity(email, used_names))
+        return entry
 
     # ── 1. emails.txt — format simple, une adresse par ligne ──
     try:
@@ -569,11 +607,7 @@ def _reload_accounts():
             email = line.split()[0]
             if "@icloud.com" not in email: continue
             if email not in existing:
-                existing[email] = {
-                    "email": email, "created": now_ts,
-                    "status": "available", "grab_phone": "",
-                    "grab_notes": "", "used_at": None,
-                }
+                existing[email] = _new_account(email, now_ts)
                 added += 1
     except FileNotFoundError:
         pass
@@ -590,11 +624,7 @@ def _reload_accounts():
             if email not in existing:
                 m = re.search(r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2})", line)
                 ts = datetime.datetime.strptime(m.group(1), "%d/%m/%Y %H:%M").strftime("%Y-%m-%dT%H:%M:%S") if m else now_ts
-                existing[email] = {
-                    "email": email, "created": ts,
-                    "status": "available", "grab_phone": "",
-                    "grab_notes": "", "used_at": None,
-                }
+                existing[email] = _new_account(email, ts)
                 added += 1
     except FileNotFoundError:
         pass
