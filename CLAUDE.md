@@ -27,14 +27,15 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 - Le bot tourne comme subprocess de `start.py` via systemd
 
 ## Fichiers principaux
-- `start.py` → lance tout (dashboard + bot + scraper)
-- `dashboard.py` → interface web admin Flask
-- `bot.py` → bot Telegram clients
-- `icloud_gen/run.py` → génère emails iCloud (nécessite cookie.txt valide)
-- `identity_gen/` → génère identités françaises (nom, prénom, adresse Bangkok)
+- `start.py` → lance dashboard + bot sur VPS (systemd)
+- `dashboard.py` → interface web admin Flask (port 5001)
+- `bot.py` → bot Telegram clients (v20+, python-telegram-bot)
+- `subscribers.py` → gestion abonnés (is_active, add, expire, block, extend, increment_orders)
+- `icloud_gen/run.py` → génère emails iCloud HME (nécessite cookie.txt valide)
+- `icloud_gen/auto_generate.sh` → wrapper LaunchAgent Mac (lock + notify + post-process)
+- `icloud_gen/post_process_emails.py` → associe identité FR + adresse Bangkok → accounts.json
+- `identity_gen/` → génère identités françaises + adresses Bangkok (seed MD5 déterministe)
 - `restaurant_scraper.py` → scrape restaurants Grab
-- `subscribers.py` → gestion abonnés ✅ (is_active, add, expire, block, extend, increment_orders)
-- `build.md` → plan complet de tout ce qui reste à faire
 
 ## Flux commande (v5 — bot.py)
 1. Client `/start` → envoie screenshot panier Grab
@@ -42,18 +43,33 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 3. Admin reçoit screenshot + adresse + compte Grab assigné automatiquement
 4. Admin : bouton "En cours" → "Livré" → compte marqué `used`
 
-## Flux abonnement (à builder — voir build.md)
+## Flux abonnement
 1. Prospect contacte bot → reçoit pitch abonnement
-2. Admin confirme paiement → `/invite USER_ID` → lien canal envoyé + ajouté subscribers.json
-3. Expiration → `/expire USER_ID` → ne peut plus commander, reste dans le canal
+2. Admin confirme paiement → `/invite USER_ID prenom` → lien Join Request créé + ajouté subscribers.json
+3. Client clique lien → Telegram envoie Join Request → bot vérifie `subscribers.is_active()` :
+   - ✅ abonné → `approve_chat_join_request` + message bienvenue
+   - ❌ non abonné → `decline_chat_join_request` + alerte admin
+4. Expiration → `/expire USER_ID` → ne peut plus commander, reste dans le canal (pas de kick)
 
-## Flux automatique emails
-1. Toutes les 65 min → génère 5 emails iCloud Hide My Email
-2. Chaque email → identité française auto-assignée (seed = email)
-3. Admin ajoute numéro téléphone manuellement → compte "full"
+## Flux automatique emails (Mac uniquement — cookie iCloud)
+1. LaunchAgent `com.grabdiscount.email-generation` → toutes les 65 min → `auto_generate.sh`
+2. `run.py generate 5` → 5 nouveaux emails iCloud HME dans emails.txt
+3. `post_process_emails.py` → associe identité FR + adresse Bangkok → `accounts.json` (status=available)
+4. Admin ajoute numéro téléphone manuellement via dashboard → compte "full"
+5. Alerte Telegram après 3 échecs consécutifs (cookie expiré)
+
+**Note** : auto-gen dashboard VPS désactivé (`_auto_gen["enabled"]=False`) pour éviter double génération.
 
 ## Compte full = 
 Email iCloud + Identité (nom, prénom, adresse Bangkok) + Numéro tél (manuel)
+
+## État actuel (2026-04-20)
+- ✅ Bot VPS actif, token rotation faite (ancien leak dans scraper.py nettoyé)
+- ✅ iCloud auto-gen Mac opérationnel (LaunchAgent + post_process)
+- ✅ Join Request auto-approval activé (bot admin du canal)
+- ⏳ **Pas encore lancé** — 0 client, 0 abonné, `subscribers.json` et `orders.json` inexistants
+- 📋 ~81 comptes iCloud prêts (available), numéros tél à remplir
+- 🧪 Tests à faire : /start du bot, /invite depuis compte secondaire, flux commande complet
 
 ## Déployer une modification
 ```bash

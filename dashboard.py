@@ -653,6 +653,9 @@ def _reload_accounts():
 def api_autogen_status():
     with _auto_lock:
         s = dict(_auto_gen)
+    # Signal si cet hôte peut réellement générer (cookie iCloud requis).
+    # Sur VPS le cookie n'existe pas → la génération est faite par le Mac LaunchAgent.
+    s["can_generate"] = (_CODE_DIR / "icloud_gen" / "cookie.txt").exists()
     return jsonify(s)
 
 @app.route("/api/autogen/toggle", methods=["POST"])
@@ -2035,16 +2038,16 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
             <div style="font-weight:700;margin-bottom:2px">🍎 Auto-génération emails iCloud</div>
             <div style="font-size:.78rem;color:var(--t3)" id="autoGenNext">—</div>
           </div>
-          <div style="font-size:.82rem;color:var(--t3)">Total : <span id="autoGenTotal" style="font-weight:700;color:var(--green)">0</span></div>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <div id="autoGenTotalWrap" style="font-size:.82rem;color:var(--t3)">Total : <span id="autoGenTotal" style="font-weight:700;color:var(--green)">0</span></div>
+          <label id="autoGenToggleWrap" style="display:flex;align-items:center;gap:8px;cursor:pointer">
             <span style="font-size:.82rem;color:var(--t3)" id="autoGenLabel">Désactivé</span>
             <div style="position:relative;width:42px;height:24px" onclick="toggleAutoGen()">
               <div id="autoGenTrack" style="width:42px;height:24px;border-radius:12px;background:var(--s3);transition:.2s"></div>
               <div id="autoGenThumb" style="position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s"></div>
             </div>
           </label>
-          <button class="btn btn-secondary btn-sm" onclick="runNow()">▶ Now</button>
-          <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0" title="Mettre à jour le cookie iCloud (expire tous les 2-3 jours)">
+          <button id="autoGenRunBtn" class="btn btn-secondary btn-sm" onclick="runNow()">▶ Now</button>
+          <label id="autoGenCookieBtn" class="btn btn-secondary btn-sm" style="cursor:pointer;margin:0" title="Mettre à jour le cookie iCloud (expire tous les 2-3 jours)">
             🍪 Cookie
             <input type="file" accept=".txt" style="display:none" onchange="uploadCookie(this)">
           </label>
@@ -2609,6 +2612,16 @@ async function loadAutoGen(){
   try{
     const r=await fetch('/api/autogen/status'); const d=await r.json();
     _autoGenEnabled=d.enabled;
+    // Mode VPS : pas de cookie iCloud → génération impossible ici, gérée par Mac.
+    // On masque les contrôles interactifs et on affiche un message d'info statique.
+    if(d.can_generate===false){
+      $('autoGenNext').innerHTML='🖥️ Génération gérée par le Mac (LaunchAgent) — rien à faire ici.';
+      $('autoGenNext').style.color='var(--t2)';
+      ['autoGenToggleWrap','autoGenRunBtn','autoGenCookieBtn','autoGenTotalWrap'].forEach(id=>{
+        const el=$(id); if(el) el.style.display='none';
+      });
+      return;
+    }
     // Toggle visuel
     const track=$('autoGenTrack'); const thumb=$('autoGenThumb');
     if(track){track.style.background=d.enabled?'var(--green)':'var(--s3)';}
