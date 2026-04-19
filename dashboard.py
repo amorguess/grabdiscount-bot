@@ -3476,8 +3476,8 @@ function renderPanel(acc){
       <h4>📋 Étapes de création</h4>
       <div style="display:flex;flex-direction:column;gap:5px;font-size:.82rem;margin-top:4px">
         <div>${stepIcon(step1done)} <span style="color:${step1done?'var(--green)':'var(--t2)'}">1. Compte pris en charge</span></div>
-        <div>⬜ <span style="color:var(--t2)">2. Créer le compte sur Grab (app ou web)</span></div>
-        <div>${stepIcon(step3done)} <span style="color:${step3done?'var(--green)':'var(--t2)'}">3. Entrer le numéro de téléphone</span></div>
+        <div>⬜ <span style="color:var(--t2)">2. Acheter un numéro sur SMSPool → créer le compte Grab</span></div>
+        <div>${stepIcon(step3done)} <span style="color:${step3done?'var(--green)':'var(--t2)'}">3. Entrer le numéro utilisé ici</span></div>
         <div>${stepIcon(step4done)} <span style="color:${step4done?'var(--green)':'var(--t2)'}">4. Valider le compte</span></div>
       </div>
     </div>
@@ -3520,11 +3520,21 @@ function renderPanel(acc){
       </div>
     </div>
 
+    <!-- Liens rapides -->
+    <div class="slide-section" style="background:var(--s3)">
+      <h4>🔗 Étape 2 — Liens rapides</h4>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        <a href="https://www.smspool.net/purchase-sms" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">📱 Acheter numéro SMSPool</a>
+        <a href="https://food.grab.com/th/en/" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">🟢 Ouvrir Grab</a>
+      </div>
+      <div style="font-size:.72rem;color:var(--t3);margin-top:6px">Achetez un numéro thaï (+66) sur SMSPool, puis créez le compte Grab avec l'identité ci-dessus.</div>
+    </div>
+
     <!-- Numéro de téléphone -->
     <div class="slide-section">
       <h4>📱 Étape 3 — Numéro de téléphone</h4>
       <div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">
-        Numéro thaï utilisé lors de la création du compte Grab (+66XXXXXXXXX).
+        Entrez le numéro thaï que vous avez utilisé pour créer le compte Grab (+66XXXXXXXXX).
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <input class="input" id="phoneInput" type="tel" placeholder="+66XXXXXXXXX"
