@@ -80,6 +80,28 @@ FORWARD_COOLDOWN = 30   # secondes
 _reply_map: dict[int, int] = {}        # admin_msg_id → client chat_id (reply = réponse client)
 _pending_suivi: dict[int, dict] = {}   # ADMIN_CHAT_ID → {order_id, client_id} (attend URL suivi)
 
+# ── Accès canal privé ────────────────────────────────────────────
+async def est_membre_canal(bot, user_id: int) -> bool:
+    """Vérifie que l'utilisateur est membre du canal privé."""
+    if user_id == ADMIN_CHAT_ID:
+        return True
+    try:
+        member = await bot.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception:
+        return False
+
+async def _refuser_acces(update: Update) -> None:
+    await update.message.reply_text(
+        "🔒 *Accès réservé aux membres*\n\n"
+        "Ce service est exclusivement disponible pour les abonnés GrabDiscount.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📲 Pour rejoindre : contacte-nous sur @GrabDiscountBot\n"
+        "💳 Abonnement mensuel — *20€/mois*\n\n"
+        "_-50% sur toutes tes commandes Grab Bangkok_ 🛵",
+        parse_mode="Markdown",
+    )
+
 def get_statut() -> bool:
     """Retourne True si l'admin est disponible, False sinon."""
     try:
@@ -242,6 +264,10 @@ def _precharger_cache() -> None:
 # ──────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not await est_membre_canal(context.bot, update.effective_user.id):
+        await _refuser_acces(update)
+        return ConversationHandler.END
+
     context.user_data.clear()
     context.user_data["order_id"] = gen_order_id()
 
@@ -1274,6 +1300,11 @@ def main() -> None:
 
         # Ignore les messages de l'admin lui-même
         if user.id == ADMIN_CHAT_ID:
+            return
+
+        # Bloque les non-membres
+        if not await est_membre_canal(context.bot, user.id):
+            await _refuser_acces(update)
             return
 
         username = f"@{user.username}" if user.username else ""
