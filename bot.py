@@ -30,7 +30,8 @@ except ImportError:
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ConversationHandler, filters, ContextTypes,
+    MessageHandler, ConversationHandler, ChatJoinRequestHandler,
+    filters, ContextTypes,
 )
 import subscribers
 
@@ -985,13 +986,16 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     prenom = context.args[1] if len(context.args) > 1 else "toi"
 
-    # Créer lien d'invitation unique (1 usage, 30 jours)
+    # Lien avec demande d'adhésion : le bot valide chaque entrée via
+    # handle_join_request (vérifie subscribers.is_active). Réutilisable
+    # mais sûr — seul un abonné actif peut entrer.
     expire_date = datetime.now() + timedelta(days=30)
     try:
         link_obj = await context.bot.create_chat_invite_link(
             chat_id=CHANNEL_ID,
-            member_limit=1,
+            creates_join_request=True,
             expire_date=expire_date,
+            name=f"Abonné {prenom} ({user_id})",
         )
         invite_link = link_obj.invite_link
     except Exception as e:
@@ -1213,6 +1217,69 @@ async def aide(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 # ──────────────────────────────────────────────────────────
+#  JOIN REQUEST — auto-approve si abonnement actif
+# ──────────────────────────────────────────────────────────
+
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Intercepte chaque demande d'adhésion au canal.
+    Approuve si subscribers.is_active(user_id), décline sinon.
+    """
+    req = update.chat_join_request
+    user_id = req.from_user.id
+    name    = req.from_user.full_name or "—"
+    uname   = f"@{req.from_user.username}" if req.from_user.username else ""
+
+    if subscribers.is_active(user_id):
+        try:
+            await context.bot.approve_chat_join_request(
+                chat_id=CHANNEL_ID, user_id=user_id,
+            )
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"⚠️ Échec approve join {user_id} : {e}",
+            )
+            return
+
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=f"✅ Join auto-approuvé : {name} {uname} `{user_id}`",
+            parse_mode="Markdown",
+        )
+        # Message de bienvenue en DM (silencieux si user n'a pas ouvert le bot)
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"🎉 Bienvenue {name} dans le canal GrabDiscount !\n\n"
+                    "Tape /start ici pour passer ta première commande 🛵"
+                ),
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            await context.bot.decline_chat_join_request(
+                chat_id=CHANNEL_ID, user_id=user_id,
+            )
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"⚠️ Échec decline join {user_id} : {e}",
+            )
+            return
+
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=(
+                f"🚫 Join refusé (non abonné) : {name} {uname} `{user_id}`\n"
+                f"Si c'est un nouveau client → `/invite {user_id} {name.split()[0]}`"
+            ),
+            parse_mode="Markdown",
+        )
+
+
+# ──────────────────────────────────────────────────────────
 #  MAIN
 # ──────────────────────────────────────────────────────────
 
@@ -1324,6 +1391,7 @@ def main() -> None:
     app.add_handler(CommandHandler("abonnes",    cmd_abonnes))
     app.add_handler(CommandHandler("block",      cmd_block))
     app.add_handler(CommandHandler("renouveler", cmd_renouveler))
+    app.add_handler(ChatJoinRequestHandler(handle_join_request))
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO) & filters.User(user_id=ADMIN_CHAT_ID),
         admin_reply_handler,
