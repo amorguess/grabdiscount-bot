@@ -18,7 +18,7 @@ LANCEMENT : python3 bot.py
 
 from __future__ import annotations
 import os, re, json, logging, random, string, time, fcntl
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 try:
@@ -32,6 +32,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, filters, ContextTypes,
 )
+import subscribers
 
 WEBAPP_URL = "https://amorguess.github.io/grabdiscount-bot/webapp/"
 
@@ -70,36 +71,52 @@ FORWARD_COOLDOWN = 30
 _reply_map:     dict[int, int]  = {}   # admin_msg_id → client_chat_id
 _pending_suivi: dict[int, dict] = {}   # ADMIN_CHAT_ID → {order_id, client_id}
 
-_membership_cache: dict[int, tuple[bool, float]] = {}
-_MEMBERSHIP_TTL = 300
+_prospects_notified: set[int] = set()
 
-async def est_membre_canal(bot, user_id: int) -> bool:
+
+def _has_access(user_id: int) -> bool:
+    """Vérifie si un utilisateur peut commander (abonnement actif ou admin)."""
     if user_id == ADMIN_CHAT_ID:
         return True
-    now = time.time()
-    cached = _membership_cache.get(user_id)
-    if cached and (now - cached[1]) < _MEMBERSHIP_TTL:
-        return cached[0]
-    try:
-        member = await bot.get_chat_member(CHANNEL_ID, user_id)
-        result = member.status in ("member", "administrator", "creator")
-        _membership_cache[user_id] = (result, now)
-        return result
-    except Exception:
-        if cached:
-            return cached[0]
-        return False
+    return subscribers.is_active(user_id)
 
-async def _refuser_acces(update: Update) -> None:
+
+async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | None = None) -> None:
+    user = update.effective_user
+    keyboard = [[InlineKeyboardButton(
+        "📩 S'abonner — Contacter l'admin",
+        url=f"tg://user?id={ADMIN_CHAT_ID}",
+    )]]
     await update.message.reply_text(
-        "🔒 *Accès réservé aux abonnés GrabDiscount*\n\n"
-        "Ce service est exclusivement disponible pour les membres actifs.\n\n"
+        "🛵 *Bienvenue sur GrabDiscount !*\n\n"
+        "Économisez jusqu'à *50%* sur toutes vos commandes Grab Bangkok.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📲 Pour rejoindre : contacte-nous sur @GrabDiscountBot\n"
-        "💳 Abonnement mensuel — *20€/mois*\n\n"
-        "_-50% sur toutes tes commandes Grab Bangkok_ 🛵",
+        "💳 Abonnement mensuel : *20€/mois*\n"
+        "✅ Commandes illimitées\n"
+        "✅ Service en français 🇫🇷\n"
+        "✅ Réponse en moins de 5 minutes\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "👇 Pour s'abonner :",
         parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
+    if context and user.id not in _prospects_notified:
+        _prospects_notified.add(user.id)
+        username = f"@{user.username}" if user.username else "_(aucun)_"
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=(
+                    "🆕 *NOUVEAU PROSPECT*\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 *{user.full_name}*  {username}\n"
+                    f"🆔 ID : `{user.id}`\n\n"
+                    f"▸ Pour activer : `/invite {user.id} {user.first_name or 'Prénom'}`"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
 def get_statut() -> bool:
     try:
@@ -286,8 +303,8 @@ def _precharger_cache() -> None:
 # ──────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not await est_membre_canal(context.bot, update.effective_user.id):
-        await _refuser_acces(update)
+    if not _has_access(update.effective_user.id):
+        await _refuser_acces(update, context)
         return ConversationHandler.END
 
     context.user_data.clear()
@@ -344,6 +361,9 @@ async def recevoir_adresse(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Assigne un compte Grab disponible
     acc = _pick_account(order_id)
+
+    # Incrémente le compteur de commandes de l'abonné
+    subscribers.increment_orders(user.id)
 
     # Sauvegarde la commande
     sauvegarder_commande(order_id, user.id, {
@@ -941,6 +961,241 @@ async def cmd_annonce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"❌ Erreur : {e}")
 
 
+# ──────────────────────────────────────────────────────────
+#  ADMIN — GESTION ABONNÉS
+# ──────────────────────────────────────────────────────────
+
+async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Crée un lien d'invitation canal unique et active l'abonnement.
+    Usage : /invite USER_ID [Prénom]
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/invite USER_ID [Prénom]`",
+            parse_mode="Markdown",
+        )
+        return
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID invalide.")
+        return
+
+    prenom = context.args[1] if len(context.args) > 1 else "toi"
+
+    # Créer lien d'invitation unique (1 usage, 30 jours)
+    expire_date = datetime.now() + timedelta(days=30)
+    try:
+        link_obj = await context.bot.create_chat_invite_link(
+            chat_id=CHANNEL_ID,
+            member_limit=1,
+            expire_date=expire_date,
+        )
+        invite_link = link_obj.invite_link
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erreur création lien canal : {e}")
+        return
+
+    # Récupérer le profil Telegram si possible
+    try:
+        chat = await context.bot.get_chat(user_id)
+        name     = chat.full_name or prenom
+        username = f"@{chat.username}" if chat.username else ""
+    except Exception:
+        name     = prenom
+        username = ""
+
+    subscribers.add_subscriber(user_id, name, username, invite_link, days=30)
+
+    exp_str = (datetime.now() + timedelta(days=30)).strftime("%d/%m/%Y")
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"🎉 *Bienvenue sur GrabDiscount, {prenom} !*\n\n"
+                "Ton abonnement est activé pour *30 jours*.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "👇 *Rejoins notre canal privé :*\n"
+                f"{invite_link}\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Une fois dans le canal, tape /start dans ce bot "
+                "pour passer ta première commande ! 🛵\n\n"
+                f"📅 Abonnement valable jusqu'au *{exp_str}*\n"
+                "_-50% sur tous tes repas Grab Bangkok_ 🍜"
+            ),
+            parse_mode="Markdown",
+        )
+        await update.message.reply_text(
+            f"✅ *Abonné activé !*\n\n"
+            f"👤 {name} `{user_id}`\n"
+            f"📅 Expire le {exp_str}\n"
+            f"🔗 {invite_link}",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Abonné ajouté mais erreur envoi message : {e}"
+        )
+
+
+async def cmd_expire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Expire manuellement un abonné.
+    Usage : /expire USER_ID
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/expire USER_ID`", parse_mode="Markdown"
+        )
+        return
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID invalide.")
+        return
+
+    found = subscribers.expire_subscriber(user_id)
+    if not found:
+        await update.message.reply_text(
+            f"❌ Abonné actif `{user_id}` introuvable.", parse_mode="Markdown"
+        )
+        return
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "⏰ *Ton abonnement GrabDiscount a expiré.*\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Pour continuer à profiter des *-50% sur Grab Bangkok*, "
+                "renouvelle ton abonnement.\n\n"
+                "💳 *20€/mois* — commandes illimitées\n\n"
+                "👇 Contacte-nous pour renouveler :"
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Renouveler", url=f"tg://user?id={ADMIN_CHAT_ID}")
+            ]]),
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        f"✅ Abonné `{user_id}` expiré. Message envoyé.", parse_mode="Markdown"
+    )
+
+
+async def cmd_abonnes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Liste tous les abonnés actifs."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    all_subs  = subscribers.get_all()
+    actifs    = [s for s in all_subs if s.get("status") == "active"]
+    expiring  = {s["user_id"] for s in subscribers.get_expiring_soon(3)}
+    now_dt    = datetime.now()
+
+    if not actifs:
+        await update.message.reply_text("Aucun abonné actif.")
+        return
+
+    lines = [f"*Abonnés actifs — {len(actifs)} total :*\n━━━━━━━━━━━━━━━━━━━━━━━━"]
+    for s in actifs:
+        uid        = s.get("user_id")
+        expires_at = s.get("expires_at", "")
+        try:
+            exp_dt    = datetime.strptime(expires_at, TS_FMT)
+            exp_str   = exp_dt.strftime("%d/%m/%Y")
+            days_left = (exp_dt - now_dt).days
+        except Exception:
+            exp_str   = expires_at
+            days_left = 999
+
+        warn     = " ⚠️" if uid in expiring else ""
+        username = s.get("username") or f"ID:{uid}"
+        lines.append(
+            f"👤 *{s.get('name','?')}* {username}\n"
+            f"   📅 Expire le {exp_str} ({days_left}j){warn}\n"
+            f"   🛵 {s.get('orders_count', 0)} commande(s)"
+        )
+
+    await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Bloque un utilisateur.
+    Usage : /block USER_ID
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/block USER_ID`", parse_mode="Markdown"
+        )
+        return
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID invalide.")
+        return
+
+    subscribers.block_subscriber(user_id)
+    await update.message.reply_text(
+        f"🚫 Utilisateur `{user_id}` bloqué.", parse_mode="Markdown"
+    )
+
+
+async def cmd_renouveler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Prolonge l'abonnement de 30 jours.
+    Usage : /renouveler USER_ID [jours]
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/renouveler USER_ID [jours]`", parse_mode="Markdown"
+        )
+        return
+    try:
+        user_id = int(context.args[0])
+        days    = int(context.args[1]) if len(context.args) > 1 else 30
+    except ValueError:
+        await update.message.reply_text("❌ Paramètres invalides.")
+        return
+
+    found = subscribers.extend_subscription(user_id, days=days)
+    if not found:
+        await update.message.reply_text(
+            f"❌ Abonné `{user_id}` introuvable.", parse_mode="Markdown"
+        )
+        return
+
+    sub     = subscribers.get_subscriber(user_id)
+    exp_str = sub.get("expires_at", "?")[:10] if sub else "?"
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "🎉 *Ton abonnement GrabDiscount a été renouvelé !*\n\n"
+                f"📅 Nouveau terme : *{exp_str}*\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Tape /start pour passer ta prochaine commande. 🛵"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        f"✅ Abonnement `{user_id}` prolongé de {days} jours. Nouveau terme : {exp_str}",
+        parse_mode="Markdown",
+    )
+
+
 async def aide(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "╔═══════════════════════════╗\n"
@@ -1008,8 +1263,8 @@ def main() -> None:
         if user.id == ADMIN_CHAT_ID:
             return
 
-        if not await est_membre_canal(context.bot, user.id):
-            await _refuser_acces(update)
+        if not _has_access(user.id):
+            await _refuser_acces(update, context)
             return
 
         username = f"@{user.username}" if user.username else ""
@@ -1059,11 +1314,16 @@ def main() -> None:
     app.add_handler(CommandHandler("statut",    cmd_statut))
     app.add_handler(CommandHandler("commandes", cmd_commandes))
     app.add_handler(CommandHandler("stats",     cmd_stats))
-    app.add_handler(CommandHandler("tchat",     cmd_tchat))
-    app.add_handler(CommandHandler("rep",       cmd_rep))
-    app.add_handler(CommandHandler("canal",     cmd_canal))
-    app.add_handler(CommandHandler("promo",     cmd_promo))
-    app.add_handler(CommandHandler("annonce",   cmd_annonce))
+    app.add_handler(CommandHandler("tchat",      cmd_tchat))
+    app.add_handler(CommandHandler("rep",        cmd_rep))
+    app.add_handler(CommandHandler("canal",      cmd_canal))
+    app.add_handler(CommandHandler("promo",      cmd_promo))
+    app.add_handler(CommandHandler("annonce",    cmd_annonce))
+    app.add_handler(CommandHandler("invite",     cmd_invite))
+    app.add_handler(CommandHandler("expire",     cmd_expire))
+    app.add_handler(CommandHandler("abonnes",    cmd_abonnes))
+    app.add_handler(CommandHandler("block",      cmd_block))
+    app.add_handler(CommandHandler("renouveler", cmd_renouveler))
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO) & filters.User(user_id=ADMIN_CHAT_ID),
         admin_reply_handler,

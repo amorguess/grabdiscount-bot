@@ -2,7 +2,15 @@
 
 ## C'est quoi ce projet ?
 Service de réductions Grab Food à Bangkok pour expatriés français.
-Les clients commandent via Telegram, on utilise des comptes Grab avec réductions.
+Modèle : abonnement **20€/mois** → accès canal privé Telegram → commandes illimitées.
+Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte = 1 commande, jamais réutilisé).
+
+## Modèle business
+- Client paie 20€/mois → reçoit lien d'invitation canal privé via le bot
+- Une fois dans le canal → peut commander via `/start` dans le bot
+- Admin reçoit screenshot Grab + compte Grab auto-assigné → passe la commande manuellement
+- Canal = communauté permanente (on ne kick jamais, même si expiré)
+- Accès commandes contrôlé par `subscribers.json`, pas par membership canal
 
 ## Infrastructure
 - **VPS Contabo** : `82.197.70.190` (Ubuntu 24.04, 6 vCPU, 12GB RAM)
@@ -25,12 +33,24 @@ Les clients commandent via Telegram, on utilise des comptes Grab avec réduction
 - `icloud_gen/run.py` → génère emails iCloud (nécessite cookie.txt valide)
 - `identity_gen/` → génère identités françaises (nom, prénom, adresse Bangkok)
 - `restaurant_scraper.py` → scrape restaurants Grab
+- `subscribers.py` → gestion abonnés (à créer — voir build.md)
+- `build.md` → plan complet de tout ce qui reste à faire
 
-## Flux automatique
+## Flux commande (v5 — bot.py)
+1. Client `/start` → envoie screenshot panier Grab
+2. Bot demande adresse de livraison
+3. Admin reçoit screenshot + adresse + compte Grab assigné automatiquement
+4. Admin : bouton "En cours" → "Livré" → compte marqué `used`
+
+## Flux abonnement (à builder — voir build.md)
+1. Prospect contacte bot → reçoit pitch abonnement
+2. Admin confirme paiement → `/invite USER_ID` → lien canal envoyé + ajouté subscribers.json
+3. Expiration → `/expire USER_ID` → ne peut plus commander, reste dans le canal
+
+## Flux automatique emails
 1. Toutes les 65 min → génère 5 emails iCloud Hide My Email
 2. Chaque email → identité française auto-assignée (seed = email)
 3. Admin ajoute numéro téléphone manuellement → compte "full"
-4. Bot Telegram gère les commandes clients
 
 ## Compte full = 
 Email iCloud + Identité (nom, prénom, adresse Bangkok) + Numéro tél (manuel)
@@ -61,3 +81,10 @@ systemctl status grabdiscount    # vérifier statut
 - DASHBOARD_PASSWORD=grabadmin2024
 - DATA_DIR=/data
 - SMSPOOL_KEY (SMSPool - peu utilisé)
+
+## Données /data/
+- `accounts.json` → comptes Grab (email, nom, tél, status: available/grab_ready/full/en_cours/used)
+- `orders.json` → commandes clients
+- `messages.json` → historique messages bot
+- `subscribers.json` → abonnés actifs (à créer)
+- `status.json` → statut admin dispo/pause
