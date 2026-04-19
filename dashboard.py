@@ -318,6 +318,19 @@ def api_cookie_upload():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
+@app.route("/api/restaurants")
+def api_restaurants_public():
+    """Endpoint public pour la Mini App Telegram — pas d'auth, CORS ouvert."""
+    try:
+        r = Path(BASE / "restaurants.json")
+        resp = make_response(r.read_bytes())
+        resp.headers["Content-Type"] = "application/json; charset=utf-8"
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        return resp
+    except Exception:
+        return jsonify({"restaurants": [], "total": 0}), 200
+
 @app.route("/api/restaurants/count")
 @auth
 def api_restaurants_count():

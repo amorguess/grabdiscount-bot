@@ -1269,12 +1269,12 @@ if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000)
   buildRestos();
   setupScrollObserver();
 } else {
-  fetch('../restaurants.json')
+  fetch('https://passfooddelivery.online/api/restaurants')
     .then(r=>r.json())
     .then(data=>{
       ALL_RESTAURANTS = data.restaurants || [];
       try{
-        localStorage.setItem('grab_restos_cache', JSON.stringify(data.restaurants));
+        localStorage.setItem('grab_restos_cache', JSON.stringify(ALL_RESTAURANTS));
         localStorage.setItem('grab_restos_ts', Date.now());
       }catch(e){ /* quota dépassé — cache ignoré, données en mémoire */ }
       buildRestos();
@@ -1282,7 +1282,7 @@ if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000)
     })
     .catch(()=>{
       document.getElementById('homeRestos').innerHTML =
-        '<div style="text-align:center;padding:40px;color:#9CA3AF">Impossible de charger les restaurants.</div>';
+        '<div style="text-align:center;padding:40px;color:#9CA3AF">⚠️ Restaurants temporairement indisponibles.<br>Réessaie dans quelques instants.</div>';
     });
 }
 
