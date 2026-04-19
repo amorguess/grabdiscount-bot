@@ -39,13 +39,13 @@ venv/
 *.log
 *.pma
 
-# ─── Scripts cookie obsolètes (remplacés par run.py login) ──
+# ─── Scripts cookie obsolètes (supprimés, en .gitignore pour éviter recréation) ──
 icloud_gen/auto_cookie_from_chrome.py
 icloud_gen/extract_cookies.py
-icloud_gen/grab_cookie_from_chrome.py
 icloud_gen/chromeonly.py
 icloud_gen/main.py
 icloud_gen/cli.py
+# Note : grab_cookie_from_chrome.py est ACTIF (utilisé par auto_renew_cookie.sh)
 
 # ─── OS ──────────────────────────────────────
 .DS_Store
