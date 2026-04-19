@@ -3029,7 +3029,18 @@ async function refreshAll(){
 })();
 refreshAll();
 setInterval(refresh, 15000);
-setInterval(()=>Promise.all([loadDispo(),loadBotStatus(),loadRestoCount()]), 30000);
+setInterval(()=>{
+  Promise.all([loadDispo(),loadBotStatus(),loadRestoCount()]);
+  // Auto-refresh comptes si sur la page accounts
+  if(_page==='accounts') loadPacks();
+  // Mettre à jour le compteur iCloud
+  try{fetch('/api/accounts').then(r=>r.json()).then(d=>{
+    const avail=(d.accounts||[]).filter(a=>a.status==='available').length;
+    const total=(d.accounts||[]).length;
+    const el=$('icloud-count-card');
+    if(el){el.textContent=avail+'/'+total+' disponibles';el.style.color=avail>0?'var(--green)':'var(--orange)';}
+  });}catch(e){}
+}, 30000);
 </script>
 </body>
 </html>"""
