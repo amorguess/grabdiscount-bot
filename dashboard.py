@@ -3169,7 +3169,7 @@ tr:last-child td{border:none}
 /* SLIDE PANEL */
 .slide-overlay{position:fixed;inset:0;background:#00000080;z-index:200;opacity:0;pointer-events:none;transition:.2s}
 .slide-overlay.open{opacity:1;pointer-events:all}
-.slide-panel{position:fixed;right:0;top:0;bottom:0;width:500px;background:var(--s1);
+.slide-panel{position:fixed;right:0;top:0;bottom:0;width:520px;background:var(--s1);
   border-left:1px solid var(--s3);z-index:201;transform:translateX(100%);transition:.25s;overflow-y:auto;
   display:flex;flex-direction:column}
 .slide-panel.open{transform:translateX(0)}
@@ -3336,6 +3336,8 @@ let _mailEmail = null;
 // ── UTILS ────────────────────────────────────────────────
 function $(id){ return document.getElementById(id); }
 function escHtml(t){ return (t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// Safe single-quoted JS string for use inside HTML onclick="copyText('...')"
+function jsq(t){ return (t||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/&/g,'&amp;'); }
 
 let _tid = 0;
 function toast(msg, ok=true){
@@ -3454,61 +3456,135 @@ function openPanel(email){
 
 function renderPanel(acc){
   const email = acc.email || '';
+  const name = escHtml(acc.full_name || (acc.prenom && acc.nom ? acc.prenom+' '+acc.nom : ''));
+  const addr = escHtml(acc.bangkok_addr || '');
+  const phone = escHtml(acc.phone || '');
   const hasPhone = !!acc.phone;
+  const isReady = acc.status === 'grab_ready' || acc.status === 'full';
+
+  // Steps checklist
+  const step1done = true; // always done (we're in the panel = claimed)
+  const step2done = isReady;
+  const step3done = hasPhone;
+  const step4done = isReady;
+
+  function stepIcon(done){ return done ? '✅' : '⬜'; }
+
   $('slideBody').innerHTML = `
-    <!-- Identité -->
+    <!-- Progress -->
+    <div class="slide-section" style="background:var(--s3)">
+      <h4>📋 Étapes de création</h4>
+      <div style="display:flex;flex-direction:column;gap:5px;font-size:.82rem;margin-top:4px">
+        <div>${stepIcon(step1done)} <span style="color:${step1done?'var(--green)':'var(--t2)'}">1. Compte pris en charge</span></div>
+        <div>⬜ <span style="color:var(--t2)">2. Créer le compte sur Grab (app ou web)</span></div>
+        <div>${stepIcon(step3done)} <span style="color:${step3done?'var(--green)':'var(--t2)'}">3. Entrer le numéro de téléphone</span></div>
+        <div>${stepIcon(step4done)} <span style="color:${step4done?'var(--green)':'var(--t2)'}">4. Valider le compte</span></div>
+      </div>
+    </div>
+
+    <!-- Identité complète à copier -->
     <div class="slide-section">
-      <h4>👤 Identité</h4>
-      <div style="display:flex;flex-direction:column;gap:6px;font-size:.83rem">
-        <div><span style="color:var(--t3)">Nom complet :</span> <span style="color:var(--t1);font-weight:600">${escHtml(acc.full_name||`${acc.prenom} ${acc.nom}`)}</span></div>
-        <div><span style="color:var(--t3)">Adresse :</span> <span style="color:var(--t2);font-size:.78rem">${escHtml(acc.bangkok_addr||'')}</span></div>
-        <div><span style="color:var(--t3)">Mot de passe :</span> <span class="mono" style="color:var(--cyan)">Grab2024lol!</span>
-          <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="copyText('Grab2024lol!')">📋</button>
+      <h4>👤 Identité — à copier dans Grab</h4>
+      <div style="display:flex;flex-direction:column;gap:8px">
+
+        <div style="background:var(--s1);border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <div style="font-size:.68rem;color:var(--t3);margin-bottom:2px">EMAIL</div>
+            <div class="mono" style="color:var(--purple);font-size:.85rem">${email}</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="copyText('${jsq(email)}')">📋 Copier</button>
         </div>
-        <div><span style="color:var(--t3)">Email iCloud :</span> <span class="mono" style="color:var(--purple)">${escHtml(email)}</span>
-          <button class="btn btn-secondary btn-sm" style="margin-left:6px" onclick="copyText('${escHtml(email)}')">📋</button>
+
+        <div style="background:var(--s1);border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <div style="font-size:.68rem;color:var(--t3);margin-bottom:2px">MOT DE PASSE</div>
+            <div class="mono" style="color:var(--cyan);font-size:.9rem;font-weight:700">Grab2024lol!</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="copyText('Grab2024lol!')">📋 Copier</button>
         </div>
+
+        <div style="background:var(--s1);border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <div style="font-size:.68rem;color:var(--t3);margin-bottom:2px">NOM COMPLET</div>
+            <div style="color:var(--t1);font-weight:600;font-size:.88rem">${name}</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="copyText('${jsq(acc.full_name || '')}')">📋 Copier</button>
+        </div>
+
+        <div style="background:var(--s1);border-radius:8px;padding:10px 12px">
+          <div style="font-size:.68rem;color:var(--t3);margin-bottom:4px">ADRESSE BANGKOK</div>
+          <div style="color:var(--t2);font-size:.78rem;line-height:1.5;margin-bottom:8px">${addr}</div>
+          <button class="btn btn-secondary btn-sm" onclick="copyText('${jsq(acc.bangkok_addr || '')}')">📋 Copier l'adresse</button>
+        </div>
+
       </div>
     </div>
 
     <!-- Numéro de téléphone -->
     <div class="slide-section">
-      <h4>📱 Numéro SMSPool</h4>
+      <h4>📱 Étape 3 — Numéro de téléphone</h4>
       <div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">
-        Achetez un numéro thaï sur <a href="https://smspool.net" target="_blank" style="color:var(--blue)">smspool.net</a>, entrez-le ici.
+        Numéro thaï utilisé lors de la création du compte Grab (+66XXXXXXXXX).
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <input class="input" id="phoneInput" type="text" placeholder="+66XXXXXXXXX"
-          value="${escHtml(acc.phone||'')}" style="flex:1"
+        <input class="input" id="phoneInput" type="tel" placeholder="+66XXXXXXXXX"
+          value="${phone}" style="flex:1"
           onkeydown="if(event.key==='Enter')savePhone()">
-        <button class="btn btn-primary btn-sm" onclick="savePhone()">💾 Enregistrer</button>
+        <button class="btn btn-primary btn-sm" onclick="savePhone()">💾 Sauvegarder</button>
       </div>
+      ${hasPhone ? `<div style="font-size:.72rem;color:var(--green);margin-top:6px">✅ Numéro enregistré : ${phone}</div>` : ''}
     </div>
 
-    <!-- Mails iCloud -->
+    <!-- Mails iCloud inline -->
     <div class="slide-section">
-      <h4>📧 Mails iCloud</h4>
-      <div style="font-size:.78rem;color:var(--t3);margin-bottom:10px">
-        Affiche les codes reçus (vérification Grab, OTP, etc.)
+      <h4>📧 Mails iCloud <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="loadInlineMails()">🔄 Charger</button></h4>
+      <div id="inlineMails" style="margin-top:8px">
+        <div style="font-size:.78rem;color:var(--t3)">Cliquez sur 🔄 Charger pour voir les codes OTP Grab.</div>
       </div>
-      <button class="btn btn-blue btn-sm" onclick="openMails('${escHtml(email)}')">📧 Voir les mails iCloud</button>
     </div>
 
     <!-- Validation -->
-    <div class="slide-section">
-      <h4>✅ Valider le compte</h4>
+    <div class="slide-section" style="border:1px solid ${hasPhone?'#00b14f40':'var(--s4)'}">
+      <h4>✅ Étape 4 — Valider le compte Grab</h4>
       <div style="font-size:.78rem;color:var(--t3);margin-bottom:10px">
-        Une fois le compte Grab créé avec succès, cliquez sur Valider pour marquer ce compte comme prêt.
+        Compte Grab créé et vérifié ? Cliquez pour le marquer comme prêt à l'emploi.
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" id="validateBtn" onclick="validateAccount()" ${!hasPhone?'disabled':''} style="flex:1">
-          ✅ Valider le compte
+        <button class="btn btn-primary" id="validateBtn" onclick="validateAccount()"
+          ${!hasPhone ? 'disabled' : ''} style="flex:1;padding:10px">
+          🎉 Compte Grab créé — Valider
         </button>
-        <button class="btn btn-danger btn-sm" onclick="unclaimAccount()">Libérer</button>
+        <button class="btn btn-danger btn-sm" onclick="unclaimAccount()" title="Libérer sans valider">↩ Libérer</button>
       </div>
-      ${!hasPhone ? '<div style="font-size:.72rem;color:var(--orange);margin-top:8px">⚠ Entrez d\'abord un numéro de téléphone</div>' : ''}
+      ${!hasPhone ? '<div style="font-size:.72rem;color:var(--orange);margin-top:8px">⚠ Enregistrez d\'abord le numéro de téléphone (étape 3)</div>' : ''}
     </div>
   `;
+}
+
+async function loadInlineMails(){
+  if(!_currentEmail) return;
+  const box = $('inlineMails');
+  box.innerHTML = '<div style="font-size:.78rem;color:var(--t3)">⏳ Chargement…</div>';
+  try{
+    const r = await authFetch('/api/employe/mails/' + encodeURIComponent(_currentEmail));
+    const d = await r.json();
+    if(!d.ok){
+      box.innerHTML = `<div style="font-size:.78rem;color:var(--red)">❌ ${escHtml(d.error||'Erreur')}</div>`;
+      return;
+    }
+    const mails = d.mails || [];
+    if(!mails.length){ box.innerHTML = '<div style="font-size:.78rem;color:var(--t3)">📭 Aucun mail</div>'; return; }
+    box.innerHTML = mails.slice(0,6).map(m => `
+      <div class="mail-item ${m.is_grab?'grab':''}" style="margin-bottom:6px">
+        ${m.is_grab ? '<div style="font-size:.68rem;color:var(--green);font-weight:700;margin-bottom:2px">🟢 Grab / Vérification</div>' : ''}
+        <div style="font-size:.72rem;color:var(--t3)">De : ${escHtml(m.from||'')}</div>
+        <div style="font-size:.84rem;font-weight:600;color:var(--t1)">${escHtml(m.subject||'(sans sujet)')}</div>
+        ${m.preview ? `<div style="font-size:.76rem;color:var(--t2);margin-top:3px;line-height:1.4">${escHtml(m.preview)}</div>` : ''}
+        <div style="font-size:.68rem;color:var(--t3);margin-top:3px">${escHtml(m.date||'')}</div>
+      </div>`).join('');
+  } catch(e){
+    box.innerHTML = `<div style="font-size:.78rem;color:var(--red)">❌ ${escHtml(e.message)}</div>`;
+  }
 }
 
 function closePanel(){
