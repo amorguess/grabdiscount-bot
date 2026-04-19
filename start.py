@@ -19,6 +19,8 @@ try:
 except ImportError:
     pass
 
+import monitoring
+
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 PORT     = int(os.environ.get("PORT", 5001))
 
@@ -66,18 +68,37 @@ def run_bot_simple():
     """Lance le bot comme un sous-processus indépendant — évite les conflits asyncio/thread."""
     import subprocess, sys
     bot_script = Path(__file__).parent / "bot.py"
+    attempt = 0
+    first_start = True
     while True:
         try:
-            print("[BOT] ✅ Démarré (subprocess)", flush=True)
+            if first_start:
+                print("[BOT] ✅ Démarré (subprocess)", flush=True)
+                first_start = False
+            else:
+                print(f"[BOT] 🔄 Relance #{attempt} (subprocess)", flush=True)
             proc = subprocess.Popen(
                 [sys.executable, str(bot_script)],
                 cwd=str(Path(__file__).parent)
             )
             proc.wait()
-            print(f"[BOT] ❌ Process terminé (code {proc.returncode}) — relance dans 10s", flush=True)
+            code = proc.returncode
+            if code != 0:
+                attempt += 1
+                print(f"[BOT] ❌ Process terminé (code {code}) — relance dans 10s", flush=True)
+                monitoring.alert_bot_crash(f"exit code {code}", attempt)
+                time.sleep(10)
+                monitoring.alert_bot_restarted(attempt)
+            else:
+                # Arrêt propre (code 0) — on relance silencieusement
+                first_start = True
+                attempt = 0
+                time.sleep(5)
         except Exception as e:
+            attempt += 1
             print(f"[BOT] ❌ Erreur : {e} — relance dans 10s", flush=True)
-        time.sleep(10)
+            monitoring.alert_bot_crash(str(e), attempt)
+            time.sleep(10)
 
 # ── 3. Scraper (daemon thread — démarre après 60s) ────────
 def run_restaurant_scraper():
@@ -102,6 +123,8 @@ def run_dashboard():
         dashboard._auto_gen["enabled"] = True
         # Lance une génération dans 5 min (au démarrage), puis toutes les 65 min
         dashboard._schedule_immediate(delay_min=5)
+        # Résumé quotidien Telegram à 8h Bangkok
+        monitoring.schedule_daily_summary()
         # Arrêt du health check minimal → Flask prend le relais
         _health_server.shutdown()
         _health_server.server_close()  # libère le socket immédiatement

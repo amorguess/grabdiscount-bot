@@ -12,6 +12,7 @@ except ImportError:
 
 from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for, make_response
 from werkzeug.middleware.proxy_fix import ProxyFix
+import monitoring
 
 app = Flask(__name__)
 # Derrière Cloudflare + nginx : on fait confiance aux headers X-Forwarded-*
@@ -216,10 +217,13 @@ def _run_auto_gen():
             _auto_gen["log"]         = _auto_gen["log"][:20]   # garde 20 entrées
         if generated:
             _reload_accounts()
+        else:
+            monitoring.alert_zero_emails(_auto_gen.get("total", 0))
     except Exception as e:
         log_entry["error"] = str(e)
         with _auto_lock:
             _auto_gen["log"].insert(0, log_entry)
+        monitoring.alert_email_gen_error(str(e))
     finally:
         _gen_status["running"] = False
 
@@ -3486,6 +3490,8 @@ if __name__ == "__main__":
     # Active l'auto-génération dès le démarrage (5 emails toutes les 65 min)
     _auto_gen["enabled"] = True
     _schedule_next()
+    monitoring.schedule_daily_summary()
     print(f"🤖 Auto-génération iCloud HME activée — 5 emails toutes les 65 min")
+    print(f"📊 Résumé quotidien Telegram activé — 8h Bangkok")
     print(f"🛵 GrabDiscount QG → http://localhost:{a.port}   |   pwd: {DASHBOARD_PWD}")
     app.run(host="0.0.0.0", port=a.port, debug=False)
