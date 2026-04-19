@@ -134,7 +134,7 @@ def run_dashboard():
         print(f"[DASH] 🛵 Dashboard démarré sur port {PORT}", flush=True)
         _flask_ready = True
         from waitress import serve
-        serve(dashboard.app, host="0.0.0.0", port=PORT, threads=8)
+        serve(dashboard.app, host="127.0.0.1", port=PORT, threads=8)
     except Exception as e:
         print(f"[DASH] ❌ Erreur : {e}", flush=True)
 
