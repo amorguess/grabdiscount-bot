@@ -1,17 +1,60 @@
+# ─── Secrets & credentials ────────────────────
 .env
-*.pyc
-__pycache__/
+.env.*
+*.pem
+*.key
+cookie.txt
+icloud_gen/cookie*.txt
+
+# ─── Données locales / runtime ────────────────
 orders.json
 messages.json
 status.json
 accounts.json
+subscribers.json
 config.json
 icloud_gen/emails.txt
 icloud_gen/emails_export.txt
-icloud_gen/chrome_selenium_profile/
 icloud_gen/*.txt
+restaurants.json
+
+# ─── Profils navigateur (cookies, sessions) ──
+icloud_gen/chrome_selenium_profile/
+chrome_selenium_profile/
+
+# ─── Dossier fantôme (résidu copie) ──────────
+grab/
+
+# ─── Backups locaux ──────────────────────────
+backups/
+
+# ─── Python ──────────────────────────────────
+*.pyc
+__pycache__/
+*.egg-info/
 venv/
-.DS_Store
-*.pma
+.venv/
+
+# ─── Logs ────────────────────────────────────
 *.log
+*.pma
+
+# ─── Scripts cookie obsolètes (remplacés par run.py login) ──
+icloud_gen/auto_cookie_from_chrome.py
+icloud_gen/extract_cookies.py
+icloud_gen/grab_cookie_from_chrome.py
+icloud_gen/chromeonly.py
+icloud_gen/main.py
+icloud_gen/cli.py
+
+# ─── OS ──────────────────────────────────────
+.DS_Store
+Thumbs.db
 node_modules/
+
+# ─── IDE ─────────────────────────────────────
+.idea/
+.vscode/
+
+# ─── Claude Code local overrides ─────────────
+.claude/settings.local.json

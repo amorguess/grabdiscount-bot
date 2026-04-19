@@ -33,7 +33,7 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 - `icloud_gen/run.py` → génère emails iCloud (nécessite cookie.txt valide)
 - `identity_gen/` → génère identités françaises (nom, prénom, adresse Bangkok)
 - `restaurant_scraper.py` → scrape restaurants Grab
-- `subscribers.py` → gestion abonnés (à créer — voir build.md)
+- `subscribers.py` → gestion abonnés ✅ (is_active, add, expire, block, extend, increment_orders)
 - `build.md` → plan complet de tout ce qui reste à faire
 
 ## Flux commande (v5 — bot.py)
@@ -86,7 +86,7 @@ systemctl status grabdiscount    # vérifier statut
 - `accounts.json` → comptes Grab (email, nom, tél, status: available/grab_ready/full/en_cours/used)
 - `orders.json` → commandes clients
 - `messages.json` → historique messages bot
-- `subscribers.json` → abonnés actifs (à créer)
+- `subscribers.json` → abonnés actifs (créé automatiquement au premier /invite)
 - `status.json` → statut admin dispo/pause
 
 ---
