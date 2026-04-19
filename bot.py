@@ -76,6 +76,10 @@ MESSAGES_FILE = os.path.join(DATA_DIR, "messages.json")
 _last_forward: dict[int, float] = {}
 FORWARD_COOLDOWN = 30   # secondes
 
+# ── Monitoring admin ─────────────────────────────────────────────
+_reply_map: dict[int, int] = {}        # admin_msg_id → client chat_id (reply = réponse client)
+_pending_suivi: dict[int, dict] = {}   # ADMIN_CHAT_ID → {order_id, client_id} (attend URL suivi)
+
 def get_statut() -> bool:
     """Retourne True si l'admin est disponible, False sinon."""
     try:
@@ -333,7 +337,7 @@ async def recevoir_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # ── Alerte admin immédiate dès réception du screenshot commande ──
     username = f"@{user.username}" if user.username else "_(aucun)_"
     try:
-        await context.bot.send_photo(
+        sent = await context.bot.send_photo(
             chat_id=ADMIN_CHAT_ID,
             photo=update.message.photo[-1].file_id,
             caption=(
@@ -345,6 +349,7 @@ async def recevoir_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ),
             parse_mode="Markdown",
         )
+        _reply_map[sent.message_id] = user.id
     except Exception as e:
         logger.error(f"Notif admin recevoir_image: {e}")
 
@@ -373,7 +378,7 @@ async def recevoir_lien(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         user = update.effective_user
         username = f"@{user.username}" if user.username else "_(aucun)_"
         try:
-            await context.bot.send_message(
+            sent = await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
                 text=(
                     "🔗 *NOUVEAU CLIENT — lien commande reçu*\n"
@@ -385,6 +390,7 @@ async def recevoir_lien(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 ),
                 parse_mode="Markdown",
             )
+            _reply_map[sent.message_id] = user.id
         except Exception as e:
             logger.error(f"Notif admin recevoir_lien: {e}")
 
@@ -532,22 +538,29 @@ async def recevoir_preuve_paiement(update: Update, context: ContextTypes.DEFAULT
         f"`/suivi {order_id} https://lien-grab.com/...`"
     )
 
-    # Envoie preuve de paiement à l'admin
-    await context.bot.send_photo(
+    # Envoie preuve de paiement à l'admin avec boutons d'action
+    _kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ En cours", callback_data=f"ao_enc_{order_id}_{user.id}"),
+        InlineKeyboardButton("❌ Annuler",  callback_data=f"ao_ann_{order_id}_{user.id}"),
+    ]])
+    sent = await context.bot.send_photo(
         chat_id=ADMIN_CHAT_ID,
         photo=update.message.photo[-1].file_id,
         caption=caption,
         parse_mode="Markdown",
+        reply_markup=_kb,
     )
+    _reply_map[sent.message_id] = user.id
 
     # Si commande par screenshot, envoie aussi le screenshot de commande
     if data.get("type_commande") == "image":
-        await context.bot.send_photo(
+        sent2 = await context.bot.send_photo(
             chat_id=ADMIN_CHAT_ID,
             photo=data["photo_file_id"],
             caption=f"📸 *Screenshot commande* — {order_id}",
             parse_mode="Markdown",
         )
+        _reply_map[sent2.message_id] = user.id
 
     return ConversationHandler.END
 
@@ -970,6 +983,244 @@ async def cmd_annonce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # ──────────────────────────────────────────────────────────
+#  ADMIN — BOUTONS INLINE COMMANDES
+# ──────────────────────────────────────────────────────────
+
+async def admin_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Gère les boutons inline des notifications de commande côté admin."""
+    query = update.callback_query
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await query.answer("⛔ Réservé à l'admin")
+        return
+    await query.answer()
+
+    # Format : "ao_<action>_<order_id>_<client_id>"
+    # ex : "ao_enc_CMD-AB12C_8711205448"
+    parts = query.data.split("_", 3)
+    if len(parts) < 4:
+        return
+    action    = parts[1]
+    order_id  = parts[2]
+    client_id = int(parts[3])
+
+    if action == "enc":
+        mettre_a_jour_statut(order_id, "en_cours")
+        try:
+            await context.bot.send_message(
+                chat_id=client_id,
+                text=(
+                    "👨‍🍳 *Votre commande est en cours de préparation !*\n\n"
+                    f"🆔 Réf : `{order_id}`\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "🕐 Vous recevrez votre lien de suivi dans quelques minutes.\n\n"
+                    "_Bon appétit bientôt !_ 🍽️"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error(f"admin_order_callback enc: {e}")
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📍 Lien suivi", callback_data=f"ao_svi_{order_id}_{client_id}"),
+                    InlineKeyboardButton("✅ Livré",       callback_data=f"ao_liv_{order_id}_{client_id}"),
+                ]])
+            )
+        except Exception:
+            pass
+
+    elif action == "ann":
+        mettre_a_jour_statut(order_id, "annule")
+        try:
+            await context.bot.send_message(
+                chat_id=client_id,
+                text=(
+                    "❌ *Commande annulée*\n\n"
+                    f"🆔 Réf : `{order_id}`\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Votre commande n'a pas pu être traitée. Nous sommes désolés.\n\n"
+                    "💳 Si vous avez payé, vous serez remboursé sous 24h.\n\n"
+                    "_Pour toute question : /tchat_"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error(f"admin_order_callback ann: {e}")
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Annulée", callback_data="ao_noop"),
+                ]])
+            )
+        except Exception:
+            pass
+
+    elif action == "svi":
+        _pending_suivi[ADMIN_CHAT_ID] = {"order_id": order_id, "client_id": client_id}
+        try:
+            await query.message.reply_text(
+                f"📍 Colle le lien de suivi Grab pour `{order_id}` :",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+
+    elif action == "liv":
+        mettre_a_jour_statut(order_id, "livre")
+        try:
+            await context.bot.send_message(
+                chat_id=client_id,
+                text=(
+                    "✅ *Commande livrée !*\n\n"
+                    f"🆔 Réf : `{order_id}`\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Merci d'avoir commandé via GrabDiscount ! 🙏\n\n"
+                    "_Pour la prochaine fois : /start_ 🛵"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error(f"admin_order_callback liv: {e}")
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Livré ✓", callback_data="ao_noop"),
+                ]])
+            )
+        except Exception:
+            pass
+
+
+# ──────────────────────────────────────────────────────────
+#  ADMIN — REPLY = RÉPONSE AU CLIENT
+# ──────────────────────────────────────────────────────────
+
+async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Quand l'admin répond à un message forwardé → réponse directe au client.
+    Aussi capte le lien de suivi quand _pending_suivi est actif.
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not update.message:
+        return
+
+    text = (update.message.text or "").strip()
+
+    # 1. URL de suivi en attente après clic bouton "📍 Lien suivi" ?
+    pending = _pending_suivi.get(ADMIN_CHAT_ID)
+    if pending and text and is_url(text):
+        order_id  = pending["order_id"]
+        client_id = pending["client_id"]
+        del _pending_suivi[ADMIN_CHAT_ID]
+        mettre_a_jour_statut(order_id, "en_cours")
+        try:
+            await context.bot.send_message(
+                chat_id=client_id,
+                text=(
+                    "╔═══════════════════════════╗\n"
+                    "║   📍  SUIVI DE COMMANDE   ║\n"
+                    "╚═══════════════════════════╝\n\n"
+                    "Votre commande est en route ! 🛵\n\n"
+                    f"🆔 Référence : `{order_id}`\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "👇 *Suivez votre livraison ici :*\n"
+                    f"{text}\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "⏰ Livraison estimée : 30-45 min\n\n"
+                    "Bon appétit ! 🍽️"
+                ),
+                parse_mode="Markdown",
+            )
+            await update.message.reply_text(
+                f"✅ Lien de suivi envoyé pour `{order_id}`",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Erreur envoi suivi : {e}")
+        return
+
+    # 2. Réponse à un message forwardé → réponse directe au client
+    if not update.message.reply_to_message:
+        return
+
+    original_mid = update.message.reply_to_message.message_id
+    client_id = _reply_map.get(original_mid)
+    if not client_id:
+        return
+
+    try:
+        if update.message.photo:
+            await context.bot.send_photo(
+                chat_id=client_id,
+                photo=update.message.photo[-1].file_id,
+                caption=(
+                    "╔═══════════════════════════╗\n"
+                    "║   💬  SERVICE CLIENT      ║\n"
+                    "╚═══════════════════════════╝\n\n"
+                    + (update.message.caption or "") +
+                    "\n\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "_Pour répondre : /tchat votre message_"
+                ),
+                parse_mode="Markdown",
+            )
+        elif text:
+            log_message(client_id, "Client", "", text, "admin")
+            await context.bot.send_message(
+                chat_id=client_id,
+                text=(
+                    "╔═══════════════════════════╗\n"
+                    "║   💬  SERVICE CLIENT      ║\n"
+                    "╚═══════════════════════════╝\n\n"
+                    f"{text}\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "_Pour répondre : /tchat votre message_"
+                ),
+                parse_mode="Markdown",
+            )
+        await update.message.reply_text(
+            f"✅ Réponse envoyée à `{client_id}`",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erreur envoi : {e}")
+
+
+# ──────────────────────────────────────────────────────────
+#  ADMIN — /stats
+# ──────────────────────────────────────────────────────────
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin — résumé rapide des stats du jour."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        orders = _read_json(ORDERS_FILE, {})
+    except Exception:
+        orders = {}
+
+    orders_today = [o for o in orders.values() if (o.get("ts") or "")[:10] == today]
+    revenue = sum(
+        o.get("prix", 0) for o in orders_today
+        if o.get("statut") not in ("annule", "en_attente_confirmation", "en_attente_paiement")
+    )
+    pending   = sum(1 for o in orders.values() if o.get("statut") in ("en_attente_paiement", "en_attente_confirmation"))
+    en_cours  = sum(1 for o in orders.values() if o.get("statut") == "en_cours")
+    total_all = len(orders)
+
+    await update.message.reply_text(
+        f"📊 *Stats du {today}*\n\n"
+        f"🛵 Commandes aujourd'hui : *{len(orders_today)}*\n"
+        f"💰 Revenue aujourd'hui   : *{revenue:,}฿*\n".replace(",", " ") +
+        f"⏳ En attente paiement   : *{pending}*\n"
+        f"🔄 En cours de livraison : *{en_cours}*\n\n"
+        f"📦 Total toutes commandes : {total_all}\n\n"
+        "🔗 Dashboard → https://passfooddelivery.online",
+        parse_mode="Markdown",
+    )
+
+
+# ──────────────────────────────────────────────────────────
 #  MAIN
 # ──────────────────────────────────────────────────────────
 
@@ -1040,7 +1291,7 @@ def main() -> None:
             if now_t - last >= FORWARD_COOLDOWN:
                 _last_forward[user.id] = now_t
                 try:
-                    await context.bot.send_message(
+                    sent_fwd = await context.bot.send_message(
                         chat_id=ADMIN_CHAT_ID,
                         text=(
                             "💬 *MESSAGE CLIENT*\n"
@@ -1049,11 +1300,11 @@ def main() -> None:
                             f"🆔 ID : `{user.id}`\n\n"
                             f"✉️ {texte}\n\n"
                             "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📤 Répondre : `/rep {user.id} votre réponse`\n"
-                            "📊 _Ou depuis le dashboard_"
+                            "↩️ _Réponds à ce message pour répondre au client_"
                         ),
                         parse_mode="Markdown",
                     )
+                    _reply_map[sent_fwd.message_id] = user.id
                 except Exception as e:
                     logger.error(f"Forward hors_session : {e}")
 
@@ -1296,12 +1547,18 @@ def main() -> None:
             "📤 *Envoyer le suivi au client :*\n"
             f"`/suivi {order_id} https://lien-grab.com/...`"
         )
-        await context.bot.send_photo(
+        _kb2 = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ En cours", callback_data=f"ao_enc_{order_id}_{user.id}"),
+            InlineKeyboardButton("❌ Annuler",  callback_data=f"ao_ann_{order_id}_{user.id}"),
+        ]])
+        sent = await context.bot.send_photo(
             chat_id=ADMIN_CHAT_ID,
             photo=update.message.photo[-1].file_id,
             caption=caption,
             parse_mode="Markdown",
+            reply_markup=_kb2,
         )
+        _reply_map[sent.message_id] = user.id
 
     # Préchargement du cache mémoire depuis le disque
     _precharger_cache()
@@ -1309,7 +1566,8 @@ def main() -> None:
     app.add_handler(conv)
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, recevoir_webapp))
     # Callbacks inline (confirmation/annulation webapp)
-    app.add_handler(CallbackQueryHandler(webapp_callback, pattern=r"^webapp_(confirm|cancel)_"))
+    app.add_handler(CallbackQueryHandler(webapp_callback,       pattern=r"^webapp_(confirm|cancel)_"))
+    app.add_handler(CallbackQueryHandler(admin_order_callback,  pattern=r"^ao_"))
     app.add_handler(CommandHandler("aide",      aide))
     app.add_handler(CommandHandler("help",      aide))
     app.add_handler(CommandHandler("suivi",     envoyer_suivi))
@@ -1317,11 +1575,17 @@ def main() -> None:
     app.add_handler(CommandHandler("pause",     cmd_pause))
     app.add_handler(CommandHandler("statut",    cmd_statut))
     app.add_handler(CommandHandler("commandes", cmd_commandes))
+    app.add_handler(CommandHandler("stats",     cmd_stats))
     app.add_handler(CommandHandler("tchat",     cmd_tchat))
     app.add_handler(CommandHandler("rep",       cmd_rep))
     app.add_handler(CommandHandler("canal",     cmd_canal))
     app.add_handler(CommandHandler("promo",     cmd_promo))
     app.add_handler(CommandHandler("annonce",   cmd_annonce))
+    # Admin : reply à un message forwardé = réponse au client / lien suivi
+    app.add_handler(MessageHandler(
+        (filters.TEXT | filters.PHOTO) & filters.User(user_id=ADMIN_CHAT_ID),
+        admin_reply_handler,
+    ))
     # Photo hors conversation — reçu Wise webapp OU message générique
     app.add_handler(MessageHandler(filters.PHOTO, recevoir_paiement_webapp))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, hors_session))
