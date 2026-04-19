@@ -2458,11 +2458,11 @@ let _chatPollTimer = null;
 let _chatSoundEnabled = true;
 let _prevUnreadTotal = 0;
 const _QUICK_REPLIES = [
-  '🛵 En cours, on s\'en occupe !',
-  '✅ Commande livrée ! Bon appétit 🍽️',
-  '📸 Envoie ton reçu de paiement Wise',
-  '⏳ Prêt dans 5 min, on passe la commande',
-  '❌ Problème avec ta commande, on te recontacte',
+  "🛵 En cours, on s'en occupe !",
+  "✅ Commande livrée ! Bon appétit 🍽️",
+  "📸 Envoie ton reçu de paiement Wise",
+  "⏳ Prêt dans 5 min, on passe la commande",
+  "❌ Problème avec ta commande, on te recontacte",
 ];
 
 function _chatBeep(){
