@@ -3337,7 +3337,7 @@ let _mailEmail = null;
 function $(id){ return document.getElementById(id); }
 function escHtml(t){ return (t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 // Safe single-quoted JS string for use inside HTML onclick="copyText('...')"
-function jsq(t){ return (t||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/&/g,'&amp;'); }
+function jsq(t){ if(!t)return ''; return t.split('\\').join('\\\\').split("'").join("\\'").split('<').join('&lt;').split('>').join('&gt;').split('&').join('&amp;'); }
 
 let _tid = 0;
 function toast(msg, ok=true){
