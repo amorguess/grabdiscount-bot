@@ -103,14 +103,16 @@ async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | No
         "Économise *la moitié* sur chacune de tes commandes Grab Food.\n"
         "Service 🇫🇷 · Livraison 10h-00h · Réponse en < 5 min.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*Choisis ton plan :*\n\n"
-        "🥢  *Starter — 20€ / mois*\n"
-        "   20 commandes / mois · parfait pour tester\n\n"
-        "♾️  *Pro — 30€ / mois*\n"
-        "   commandes illimitées · pour les vrais gourmands\n\n"
-        "🎁  *Parrainage* — -5€ pour toi ET ton pote\n\n"
+        "*Inclus dans l'abonnement :*\n"
+        "• -50% sur toutes tes commandes Grab\n"
+        "• Accès *canal privé* (annonces, promos, bons plans)\n"
+        "• Service client français 10h-00h\n"
+        "• Parrainage : -5€ pour toi ET ton pote\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "👇 *Choisis ci-dessous :*",
+        "*Choisis ton plan :*\n\n"
+        "🥢  *Starter — 20€ / mois* · 20 commandes\n"
+        "♾️  *Pro — 30€ / mois* · commandes illimitées\n\n"
+        "👇",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -145,55 +147,69 @@ async def plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     choix = (q.data or "").split(":", 1)[1] if q.data else ""
     user  = q.from_user
 
+    reply_markup = None
+
     if choix == "starter":
         ref_note = ""
         if user.id in _pending_referrals:
-            ref_note = "\n🎁 Parrainage détecté → *-5€ le 1er mois* (paie 15€)\n"
+            ref_note = "🎁 *Parrainage détecté* : -5€ de réduction sur ton 1er mois → tu paies *15€*\n\n"
         text = (
             "🥢 *Plan Starter — 20€ / mois*\n\n"
             "• 20 commandes / mois\n"
             "• -50% sur chaque commande\n"
-            "• Service 🇫🇷 10h-00h\n"
-            f"{ref_note}\n"
+            "• Accès canal privé\n"
+            "• Service 🇫🇷 10h-00h\n\n"
+            f"{ref_note}"
             "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💳 *Paie via Wise (CB / virement) :*\n"
-            f"{WISE_LINK_STARTER}\n\n"
+            "👇 *Clique pour payer via Wise (CB / virement) :*\n\n"
             "Une fois payé, envoie le *screenshot du paiement* ici — "
             "je t'active ton accès en < 10 min."
         )
+        reply_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💳 Payer 20€ via Wise", url=WISE_LINK_STARTER),
+        ]])
     elif choix == "pro":
         ref_note = ""
         if user.id in _pending_referrals:
-            ref_note = "\n🎁 Parrainage détecté → *-5€ le 1er mois* (paie 25€)\n"
+            ref_note = "🎁 *Parrainage détecté* : -5€ de réduction sur ton 1er mois → tu paies *25€*\n\n"
         text = (
             "♾️ *Plan Pro — 30€ / mois*\n\n"
             "• Commandes *illimitées*\n"
             "• -50% sur chaque commande\n"
-            "• Service 🇫🇷 10h-00h\n"
-            f"{ref_note}\n"
+            "• Accès canal privé\n"
+            "• Service 🇫🇷 10h-00h\n\n"
+            f"{ref_note}"
             "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💳 *Paie via Wise (CB / virement) :*\n"
-            f"{WISE_LINK_PRO}\n\n"
+            "👇 *Clique pour payer via Wise (CB / virement) :*\n\n"
             "Une fois payé, envoie le *screenshot du paiement* ici — "
             "je t'active ton accès en < 10 min."
         )
+        reply_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💳 Payer 30€ via Wise", url=WISE_LINK_PRO),
+        ]])
     elif choix == "ref":
         text = (
             "🎁 *Parrainage GrabDiscount*\n\n"
-            "Tu actives ton abonnement et tu donnes ton *lien perso* à un pote :\n\n"
-            "• Ton pote paie *-5€* sur son 1er mois\n"
-            "• Toi, tu reçois *-5€* sur ton prochain renouvellement\n\n"
+            "Abonne-toi, puis partage ton *lien perso* à un pote :\n\n"
+            "• Ton pote : *-5€ de réduction* sur son 1er mois\n"
+            "  (Starter à 15€ au lieu de 20€ · Pro à 25€ au lieu de 30€)\n"
+            "• Toi : *-5€ de réduction* sur ton prochain renouvellement\n\n"
             "Une fois abonné, tape /parrainage pour récupérer ton lien.\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "👉 Pour t'abonner, choisis Starter ou Pro ci-dessus."
+            "👉 Pour t'abonner, choisis Starter ou Pro."
         )
     else:
         return
 
     try:
-        await q.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
-    except Exception:
-        pass
+        await q.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+            reply_markup=reply_markup,
+        )
+    except Exception as e:
+        logger.error(f"plan_callback send failed ({choix}): {e}")
 
 def get_statut() -> bool:
     try:
