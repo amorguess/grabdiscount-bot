@@ -1271,7 +1271,7 @@ if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000)
   buildRestos();
   setupScrollObserver();
 } else {
-  fetch('https://passfooddelivery.online/api/restaurants')
+  fetch('https://passfooddelivery.online/api/restaurants', {signal: AbortSignal.timeout(5000)})
     .then(r=>r.json())
     .then(data=>{
       ALL_RESTAURANTS = data.restaurants || [];

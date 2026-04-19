@@ -85,20 +85,22 @@ def run_bot_simple():
             code = proc.returncode
             if code != 0:
                 attempt += 1
-                print(f"[BOT] ❌ Process terminé (code {code}) — relance dans 10s", flush=True)
+                # Backoff exponentiel : 10s → 20s → 40s → max 120s
+                delay = min(10 * (2 ** (attempt - 1)), 120)
+                print(f"[BOT] ❌ Crash (code {code}) — relance dans {delay}s (tentative {attempt})", flush=True)
                 monitoring.alert_bot_crash(f"exit code {code}", attempt)
-                time.sleep(10)
+                time.sleep(delay)
                 monitoring.alert_bot_restarted(attempt)
             else:
-                # Arrêt propre (code 0) — on relance silencieusement
                 first_start = True
                 attempt = 0
                 time.sleep(5)
         except Exception as e:
             attempt += 1
-            print(f"[BOT] ❌ Erreur : {e} — relance dans 10s", flush=True)
+            delay = min(10 * (2 ** (attempt - 1)), 120)
+            print(f"[BOT] ❌ Erreur : {e} — relance dans {delay}s", flush=True)
             monitoring.alert_bot_crash(str(e), attempt)
-            time.sleep(10)
+            time.sleep(delay)
 
 # ── 3. Scraper (daemon thread — démarre après 60s) ────────
 def run_restaurant_scraper():

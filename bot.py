@@ -80,15 +80,27 @@ FORWARD_COOLDOWN = 30   # secondes
 _reply_map: dict[int, int] = {}        # admin_msg_id → client chat_id (reply = réponse client)
 _pending_suivi: dict[int, dict] = {}   # ADMIN_CHAT_ID → {order_id, client_id} (attend URL suivi)
 
-# ── Accès canal privé ────────────────────────────────────────────
+# ── Accès canal privé — cache 5 min pour éviter rate limit Telegram ──
+_membership_cache: dict[int, tuple[bool, float]] = {}  # user_id → (is_member, timestamp)
+_MEMBERSHIP_TTL = 300  # 5 minutes
+
 async def est_membre_canal(bot, user_id: int) -> bool:
-    """Vérifie que l'utilisateur est membre du canal privé."""
+    """Vérifie membership avec cache 5min. Fail-closed : doute = bloqué."""
     if user_id == ADMIN_CHAT_ID:
         return True
+    now = time.time()
+    cached = _membership_cache.get(user_id)
+    if cached and (now - cached[1]) < _MEMBERSHIP_TTL:
+        return cached[0]
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ("member", "administrator", "creator")
+        result = member.status in ("member", "administrator", "creator")
+        _membership_cache[user_id] = (result, now)
+        return result
     except Exception:
+        # Fail-closed : si API down, on utilise le cache même expiré
+        if cached:
+            return cached[0]
         return False
 
 async def _refuser_acces(update: Update) -> None:
@@ -206,6 +218,11 @@ def sauvegarder_commande(order_id: str, chat_id: int, data: dict, statut: str = 
         _write_json(ORDERS_FILE, orders)
     except Exception as e:
         logger.error(f"Erreur sauvegarde commande : {e}")
+        try:
+            import monitoring
+            monitoring.alert_email_gen_error(f"SAUVEGARDE COMMANDE ÉCHOUÉE {order_id}: {e}")
+        except Exception:
+            pass
 
 def mettre_a_jour_statut(order_id: str, statut: str) -> None:
     """Met à jour le statut (cache + disque atomique)."""
