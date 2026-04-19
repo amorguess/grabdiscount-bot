@@ -74,7 +74,7 @@ _gen_status = {"running": False, "log": "", "last_run": None}
 
 # ── Auto-génération toutes les 65 min ─────────────────────
 _auto_gen = {
-    "enabled":    True,        # activé par défaut au démarrage
+    "enabled":    False,       # géré par LaunchAgent Mac (com.grabdiscount.email-generation)
     "interval":   65,          # minutes entre chaque run
     "count":      5,           # emails par run
     "total":      0,           # total généré depuis le démarrage
