@@ -45,6 +45,14 @@ BOT_TOKEN     = os.environ["BOT_TOKEN"]
 ADMIN_CHAT_ID = int(os.environ["ADMIN_CHAT_ID"])
 CHANNEL_ID    = int(os.environ.get("CHANNEL_ID", -1003910907077))
 
+# ── Plans & liens paiement ────────────────────────────────
+WISE_LINK_STARTER = "https://wise.com/pay/r/_XGgs7i3c4CThlg"   # 20€
+WISE_LINK_PRO     = "https://wise.com/pay/r/ejA8VTB89QRBmwc"   # 30€
+PLAN_LABEL = {"starter": "Starter — 20€", "pro": "Pro — 30€"}
+
+# Parrains détectés via ?start=ref_<id> — clé = filleul_id, val = parrain_id
+_pending_referrals: dict[int, int] = {}
+
 # ──────────────────────────────────────────────────────────
 #  ÉTATS
 # ──────────────────────────────────────────────────────────
@@ -84,26 +92,34 @@ def _has_access(user_id: int) -> bool:
 
 async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | None = None) -> None:
     user = update.effective_user
-    keyboard = [[InlineKeyboardButton(
-        "📩 S'abonner — Contacter l'admin",
-        url="https://t.me/Grabfoodeat",
-    )]]
+    keyboard = [
+        [InlineKeyboardButton("🥢  Starter — 20€ / mois", callback_data="plan:starter")],
+        [InlineKeyboardButton("♾️  Pro — 30€ / mois",    callback_data="plan:pro")],
+        [InlineKeyboardButton("🎁  Parrainage (-5€)",      callback_data="plan:ref")],
+        [InlineKeyboardButton("💬  Parler à l'admin",      url="https://t.me/Grabfoodeat")],
+    ]
     await update.message.reply_text(
-        "🛵 *Bienvenue sur GrabDiscount !*\n\n"
-        "Économisez jusqu'à *50%* sur toutes vos commandes Grab Bangkok.\n\n"
+        "🛵 *GrabDiscount — Livraison à -50% dans toute la Thaïlande*\n\n"
+        "Économise *la moitié* sur chacune de tes commandes Grab Food.\n"
+        "Service 🇫🇷 · Livraison 10h-00h · Réponse en < 5 min.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💳 Abonnement mensuel : *20€/mois*\n"
-        "✅ Commandes illimitées\n"
-        "✅ Service en français 🇫🇷\n"
-        "✅ Réponse en moins de 5 minutes\n\n"
+        "*Choisis ton plan :*\n\n"
+        "🥢  *Starter — 20€ / mois*\n"
+        "   20 commandes / mois · parfait pour tester\n\n"
+        "♾️  *Pro — 30€ / mois*\n"
+        "   commandes illimitées · pour les vrais gourmands\n\n"
+        "🎁  *Parrainage* — -5€ pour toi ET ton pote\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "👇 Pour s'abonner :",
+        "👇 *Choisis ci-dessous :*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     if context and user.id not in _prospects_notified:
         _prospects_notified.add(user.id)
         username = f"@{user.username}" if user.username else "_(aucun)_"
+        parrain_line = ""
+        if user.id in _pending_referrals:
+            parrain_line = f"\n🎁 Parrainé par : `{_pending_referrals[user.id]}`"
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID,
@@ -111,13 +127,73 @@ async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | No
                     "🆕 *NOUVEAU PROSPECT*\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"👤 *{user.full_name}*  {username}\n"
-                    f"🆔 ID : `{user.id}`\n\n"
-                    f"▸ Pour activer : `/invite {user.id} {user.first_name or 'Prénom'}`"
+                    f"🆔 ID : `{user.id}`"
+                    f"{parrain_line}\n\n"
+                    f"▸ Starter : `/invite {user.id} {user.first_name or 'Prénom'} starter`\n"
+                    f"▸ Pro     : `/invite {user.id} {user.first_name or 'Prénom'} pro`"
                 ),
                 parse_mode="Markdown",
             )
         except Exception:
             pass
+
+
+async def plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Réponse aux boutons plan:starter / plan:pro / plan:ref."""
+    q = update.callback_query
+    await q.answer()
+    choix = (q.data or "").split(":", 1)[1] if q.data else ""
+    user  = q.from_user
+
+    if choix == "starter":
+        ref_note = ""
+        if user.id in _pending_referrals:
+            ref_note = "\n🎁 Parrainage détecté → *-5€ le 1er mois* (paie 15€)\n"
+        text = (
+            "🥢 *Plan Starter — 20€ / mois*\n\n"
+            "• 20 commandes / mois\n"
+            "• -50% sur chaque commande\n"
+            "• Service 🇫🇷 10h-00h\n"
+            f"{ref_note}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💳 *Paie via Wise (CB / virement) :*\n"
+            f"{WISE_LINK_STARTER}\n\n"
+            "Une fois payé, envoie le *screenshot du paiement* ici — "
+            "je t'active ton accès en < 10 min."
+        )
+    elif choix == "pro":
+        ref_note = ""
+        if user.id in _pending_referrals:
+            ref_note = "\n🎁 Parrainage détecté → *-5€ le 1er mois* (paie 25€)\n"
+        text = (
+            "♾️ *Plan Pro — 30€ / mois*\n\n"
+            "• Commandes *illimitées*\n"
+            "• -50% sur chaque commande\n"
+            "• Service 🇫🇷 10h-00h\n"
+            f"{ref_note}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💳 *Paie via Wise (CB / virement) :*\n"
+            f"{WISE_LINK_PRO}\n\n"
+            "Une fois payé, envoie le *screenshot du paiement* ici — "
+            "je t'active ton accès en < 10 min."
+        )
+    elif choix == "ref":
+        text = (
+            "🎁 *Parrainage GrabDiscount*\n\n"
+            "Tu actives ton abonnement et tu donnes ton *lien perso* à un pote :\n\n"
+            "• Ton pote paie *-5€* sur son 1er mois\n"
+            "• Toi, tu reçois *-5€* sur ton prochain renouvellement\n\n"
+            "Une fois abonné, tape /parrainage pour récupérer ton lien.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👉 Pour t'abonner, choisis Starter ou Pro ci-dessus."
+        )
+    else:
+        return
+
+    try:
+        await q.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
+    except Exception:
+        pass
 
 def get_statut() -> bool:
     try:
@@ -304,9 +380,50 @@ def _precharger_cache() -> None:
 # ──────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not _has_access(update.effective_user.id):
-        await _refuser_acces(update, context)
-        return ConversationHandler.END
+    user = update.effective_user
+
+    # Parse ?start=ref_<parrain_id> pour parrainage
+    if context.args:
+        arg0 = context.args[0]
+        if arg0.startswith("ref_"):
+            try:
+                parrain_id = int(arg0[4:])
+                if parrain_id != user.id:
+                    _pending_referrals[user.id] = parrain_id
+            except ValueError:
+                pass
+
+    # Admin = accès direct (bypass can_order)
+    if user.id != ADMIN_CHAT_ID:
+        ok, reason = subscribers.can_order(user.id)
+        if not ok:
+            if reason == "cap_reached":
+                used, cap = subscribers.get_monthly_usage(user.id)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("♾️ Passer en Pro — 30€", url="https://t.me/Grabfoodeat"),
+                ]])
+                await update.message.reply_text(
+                    f"🚫 *Limite atteinte ce mois*\n\n"
+                    f"Tu as fait *{used}/{cap}* commandes sur ton plan Starter.\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👉 Passe en *Pro (30€/mois)* pour commander sans limite — "
+                    f"ou attends le 1er du mois prochain.",
+                    parse_mode="Markdown",
+                    reply_markup=kb,
+                )
+                return ConversationHandler.END
+            if reason == "paused":
+                sub = subscribers.get_subscriber(user.id)
+                until = (sub or {}).get("paused_until", "")[:10]
+                await update.message.reply_text(
+                    f"⏸️ *Ton abonnement est en pause jusqu'au {until}.*\n\n"
+                    f"Contacte l'admin pour reprendre plus tôt si besoin.",
+                    parse_mode="Markdown",
+                )
+                return ConversationHandler.END
+            # no_sub / expired / blocked → pitch standard
+            await _refuser_acces(update, context)
+            return ConversationHandler.END
 
     context.user_data.clear()
     context.user_data["order_id"] = gen_order_id()
@@ -315,13 +432,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         InlineKeyboardButton("🛒  Ouvrir Grab", web_app=WebAppInfo(url=WEBAPP_URL))
     ]]
 
+    # Ligne d'usage mensuel pour abonnés non-admin
+    usage_line = ""
+    if user.id != ADMIN_CHAT_ID:
+        used, cap = subscribers.get_monthly_usage(user.id)
+        if cap == -1:
+            usage_line = f"♾️ Plan Pro — {used} commande(s) ce mois\n\n"
+        else:
+            restantes = max(0, cap - used)
+            usage_line = f"🥢 Plan Starter — *{restantes}/{cap}* commande(s) restantes ce mois\n\n"
+
     await update.message.reply_text(
-        "🛵 *GrabDiscount* — Livraison à Bangkok\n\n"
+        "🛵 *GrabDiscount* — Livraison -50% Thaïlande\n\n"
+        f"{usage_line}"
         "Comment commander :\n"
         "1️⃣ Ouvre Grab et choisis ton restaurant\n"
         "2️⃣ Prends un *screenshot de ton panier*\n"
-        "3️⃣ Envoie-le ici avec ton adresse\n"
+        "3️⃣ Envoie-le ici + ton adresse\n"
         "4️⃣ On passe la commande pour toi 🍽️\n\n"
+        "🕙 Service de *10h à 00h*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "📸 *Envoie ton screenshot de panier Grab :*",
         parse_mode="Markdown",
@@ -968,13 +1097,15 @@ async def cmd_annonce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Crée un lien d'invitation canal unique et active l'abonnement.
-    Usage : /invite USER_ID [Prénom]
+    Usage : /invite USER_ID [Prénom] [plan]
+      plan = starter (défaut) ou pro
     """
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
     if not context.args:
         await update.message.reply_text(
-            "⚠️ *Usage :*\n`/invite USER_ID [Prénom]`",
+            "⚠️ *Usage :*\n`/invite USER_ID [Prénom] [starter|pro]`\n"
+            "_Défaut : starter_",
             parse_mode="Markdown",
         )
         return
@@ -984,7 +1115,16 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("❌ ID invalide.")
         return
 
-    prenom = context.args[1] if len(context.args) > 1 else "toi"
+    # Parse args : le dernier peut être le plan (starter|pro), sinon tout = prénom
+    plan = subscribers.DEFAULT_PLAN
+    extra = context.args[1:]
+    if extra and extra[-1].lower() in subscribers.PLAN_CAPS:
+        plan  = extra[-1].lower()
+        extra = extra[:-1]
+    prenom = " ".join(extra) if extra else "toi"
+
+    # Parrain détecté via /start=ref_X plus tôt
+    parrain_id = _pending_referrals.pop(user_id, None)
 
     # Lien avec demande d'adhésion : le bot valide chaque entrée via
     # handle_join_request (vérifie subscribers.is_active). Réutilisable
@@ -995,7 +1135,7 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             chat_id=CHANNEL_ID,
             creates_join_request=True,
             expire_date=expire_date,
-            name=f"Abonné {prenom} ({user_id})",
+            name=f"{plan.capitalize()} {prenom} ({user_id})",
         )
         invite_link = link_obj.invite_link
     except Exception as e:
@@ -1011,34 +1151,72 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         name     = prenom
         username = ""
 
-    subscribers.add_subscriber(user_id, name, username, invite_link, days=30)
+    entry = subscribers.add_subscriber(
+        user_id, name, username, invite_link,
+        days=30, plan=plan, parrain_id=parrain_id,
+    )
+    parrain_applied = bool(parrain_id) and entry.get("parrain_id") == parrain_id
 
-    exp_str = (datetime.now() + timedelta(days=30)).strftime("%d/%m/%Y")
+    exp_str  = (datetime.now() + timedelta(days=30)).strftime("%d/%m/%Y")
+    plan_cap = subscribers.PLAN_CAPS[plan]
+    cap_line = (
+        "♾️ *Commandes illimitées*" if plan_cap == -1
+        else f"🥢 *{plan_cap} commandes / mois*"
+    )
+    price    = subscribers.PLAN_PRICES[plan]
+    paid     = price - 5 if parrain_applied else price
+    ref_note = (
+        f"\n🎁 _Parrainage appliqué : -5€ sur ce 1er mois (payé {paid}€)_\n"
+        if parrain_applied else ""
+    )
 
     try:
         await context.bot.send_message(
             chat_id=user_id,
             text=(
                 f"🎉 *Bienvenue sur GrabDiscount, {prenom} !*\n\n"
-                "Ton abonnement est activé pour *30 jours*.\n\n"
+                f"Plan *{plan.capitalize()}* activé pour *30 jours*.\n"
+                f"{cap_line}"
+                f"{ref_note}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "👇 *Rejoins notre canal privé :*\n"
                 f"{invite_link}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "Une fois dans le canal, tape /start dans ce bot "
-                "pour passer ta première commande ! 🛵\n\n"
+                "pour passer ta première commande 🛵\n\n"
                 f"📅 Abonnement valable jusqu'au *{exp_str}*\n"
-                "_-50% sur tous tes repas Grab Bangkok_ 🍜"
+                "_-50% sur tes repas Grab dans toute la Thaïlande_ 🍜\n\n"
+                "🎁 Tape /parrainage pour filer -5€ à un pote et en gagner -5€ aussi."
             ),
             parse_mode="Markdown",
         )
+        admin_note = ""
+        if parrain_applied:
+            admin_note = f"\n🎁 Parrain `{parrain_id}` crédité +5€"
         await update.message.reply_text(
             f"✅ *Abonné activé !*\n\n"
             f"👤 {name} `{user_id}`\n"
+            f"📦 Plan : {plan.capitalize()} ({price}€"
+            f"{' -5€' if parrain_applied else ''})\n"
             f"📅 Expire le {exp_str}\n"
-            f"🔗 {invite_link}",
+            f"🔗 {invite_link}"
+            f"{admin_note}",
             parse_mode="Markdown",
         )
+        # Notification parrain
+        if parrain_applied:
+            try:
+                await context.bot.send_message(
+                    chat_id=parrain_id,
+                    text=(
+                        f"🎉 *Ton filleul {name} vient de s'abonner !*\n\n"
+                        "Tu reçois *-5€ de crédit* sur ton prochain renouvellement. 🎁\n\n"
+                        "Tape /parrainage pour voir ton total."
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
     except Exception as e:
         await update.message.reply_text(
             f"⚠️ Abonné ajouté mais erreur envoi message : {e}"
@@ -1121,10 +1299,19 @@ async def cmd_abonnes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         warn     = " ⚠️" if uid in expiring else ""
         username = s.get("username") or f"ID:{uid}"
+        plan     = s.get("plan") or subscribers.DEFAULT_PLAN
+        cap      = subscribers.PLAN_CAPS.get(plan, -1)
+        m_ord    = s.get("monthly_orders", 0)
+        cap_str  = "∞" if cap == -1 else str(cap)
+        plan_emoji = "♾️" if plan == "pro" else "🥢"
+        paused   = " ⏸️" if s.get("paused_until") else ""
+        credit   = s.get("referral_credit_eur", 0) or 0
+        credit_str = f" · 🎁 {credit}€" if credit else ""
         lines.append(
             f"👤 *{s.get('name','?')}* {username}\n"
-            f"   📅 Expire le {exp_str} ({days_left}j){warn}\n"
-            f"   🛵 {s.get('orders_count', 0)} commande(s)"
+            f"   {plan_emoji} {plan.capitalize()} · {m_ord}/{cap_str} ce mois · "
+            f"{s.get('orders_count', 0)} total{credit_str}\n"
+            f"   📅 Expire le {exp_str} ({days_left}j){warn}{paused}"
         )
 
     await update.message.reply_text("\n\n".join(lines), parse_mode="Markdown")
@@ -1200,6 +1387,129 @@ async def cmd_renouveler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
+async def cmd_parrainage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Affiche le lien de parrainage perso + filleuls + crédit en attente."""
+    user = update.effective_user
+    # Admin autorisé pour test, sinon abonné actif requis
+    if user.id != ADMIN_CHAT_ID and not subscribers.is_active(user.id):
+        await _refuser_acces(update, context)
+        return
+
+    bot_username = (await context.bot.get_me()).username
+    lien = f"https://t.me/{bot_username}?start=ref_{user.id}"
+
+    credit   = subscribers.get_referral_credit(user.id)
+    filleuls = subscribers.get_filleuls(user.id)
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "📤 Partager mon lien",
+            url=f"https://t.me/share/url?url={lien}&text="
+                + "Essaie%20GrabDiscount%20%E2%80%94%20-50%25%20sur%20Grab%20en%20Tha%C3%AFlande%20%F0%9F%9B%B5",
+        )
+    ]])
+
+    txt = (
+        "🎁 *Ton programme parrainage*\n\n"
+        "Partage ce lien à un pote :\n"
+        "• Il a *-5€* sur son 1er mois\n"
+        "• Tu reçois *-5€* sur ton prochain renouvellement\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔗 *Ton lien perso :*\n`{lien}`\n\n"
+        f"👥 *Filleuls actifs :* {len(filleuls)}\n"
+        f"💰 *Crédit en attente :* {credit}€"
+    )
+    await update.message.reply_text(
+        txt, parse_mode="Markdown", reply_markup=kb, disable_web_page_preview=True
+    )
+
+
+async def cmd_pauseabo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Met un abonnement en pause. Usage admin : /pauseabo USER_ID [jours]
+    Par défaut 30 jours, expiration prolongée d'autant.
+    """
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/pauseabo USER_ID [jours]`\n_Défaut : 30 jours_",
+            parse_mode="Markdown",
+        )
+        return
+    try:
+        user_id = int(context.args[0])
+        days    = int(context.args[1]) if len(context.args) > 1 else 30
+    except ValueError:
+        await update.message.reply_text("❌ Paramètres invalides.")
+        return
+
+    ok = subscribers.pause_subscriber(user_id, days=days)
+    if not ok:
+        await update.message.reply_text(
+            f"❌ Abonné `{user_id}` introuvable.", parse_mode="Markdown"
+        )
+        return
+
+    sub = subscribers.get_subscriber(user_id)
+    until = (sub or {}).get("paused_until", "")[:10]
+    new_exp = (sub or {}).get("expires_at", "")[:10]
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"⏸️ *Ton abonnement GrabDiscount est en pause.*\n\n"
+                f"Reprise prévue le *{until}*.\n"
+                f"Ton expiration est prolongée d'autant → *{new_exp}*.\n\n"
+                "_Tu ne peux pas commander pendant la pause mais tu gardes tous tes jours._"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        f"⏸️ Abonné `{user_id}` en pause jusqu'au {until}. Nouvelle expiration : {new_exp}",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_resumeabo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sort un abonnement de pause. Usage admin : /resumeabo USER_ID"""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage :*\n`/resumeabo USER_ID`", parse_mode="Markdown"
+        )
+        return
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID invalide.")
+        return
+
+    ok = subscribers.resume_subscriber(user_id)
+    if not ok:
+        await update.message.reply_text(
+            f"❌ Abonné `{user_id}` introuvable.", parse_mode="Markdown"
+        )
+        return
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="▶️ *Ton abonnement GrabDiscount est réactivé.*\n\nTape /start pour commander 🛵",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        f"▶️ Abonné `{user_id}` réactivé.", parse_mode="Markdown"
+    )
+
+
 async def aide(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "╔═══════════════════════════╗\n"
@@ -1211,6 +1521,7 @@ async def aide(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "3️⃣ Indiquer ton adresse de livraison\n"
         "4️⃣ On traite ta commande 🛵\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎁 /parrainage — Mon lien parrainage (-5€)\n"
         "❌ /annuler — Annuler la commande\n"
         "💬 /tchat — Contacter le service client",
         parse_mode="Markdown",
@@ -1251,9 +1562,14 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    f"🎉 Bienvenue {name} dans le canal GrabDiscount !\n\n"
-                    "Tape /start ici pour passer ta première commande 🛵"
+                    f"🎉 *Bienvenue {name} dans le canal GrabDiscount !*\n\n"
+                    "🛵 *-50% sur Grab partout en Thaïlande*\n"
+                    "🕙 Service de *10h à 00h* · 🇫🇷 Français\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Tape /start ici pour passer ta première commande.\n"
+                    "Tape /parrainage pour gagner *-5€* avec tes potes 🎁"
                 ),
+                parse_mode="Markdown",
             )
         except Exception:
             pass
@@ -1373,14 +1689,15 @@ def main() -> None:
 
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(admin_order_callback, pattern=r"^ao_"))
-    app.add_handler(CommandHandler("aide",      aide))
-    app.add_handler(CommandHandler("help",      aide))
-    app.add_handler(CommandHandler("suivi",     envoyer_suivi))
-    app.add_handler(CommandHandler("dispo",     cmd_dispo))
-    app.add_handler(CommandHandler("pause",     cmd_pause))
-    app.add_handler(CommandHandler("statut",    cmd_statut))
-    app.add_handler(CommandHandler("commandes", cmd_commandes))
-    app.add_handler(CommandHandler("stats",     cmd_stats))
+    app.add_handler(CallbackQueryHandler(plan_callback,        pattern=r"^plan:"))
+    app.add_handler(CommandHandler("aide",       aide))
+    app.add_handler(CommandHandler("help",       aide))
+    app.add_handler(CommandHandler("suivi",      envoyer_suivi))
+    app.add_handler(CommandHandler("dispo",      cmd_dispo))
+    app.add_handler(CommandHandler("pause",      cmd_pause))
+    app.add_handler(CommandHandler("statut",     cmd_statut))
+    app.add_handler(CommandHandler("commandes",  cmd_commandes))
+    app.add_handler(CommandHandler("stats",      cmd_stats))
     app.add_handler(CommandHandler("tchat",      cmd_tchat))
     app.add_handler(CommandHandler("rep",        cmd_rep))
     app.add_handler(CommandHandler("canal",      cmd_canal))
@@ -1391,6 +1708,9 @@ def main() -> None:
     app.add_handler(CommandHandler("abonnes",    cmd_abonnes))
     app.add_handler(CommandHandler("block",      cmd_block))
     app.add_handler(CommandHandler("renouveler", cmd_renouveler))
+    app.add_handler(CommandHandler("parrainage", cmd_parrainage))
+    app.add_handler(CommandHandler("pauseabo",   cmd_pauseabo))
+    app.add_handler(CommandHandler("resumeabo",  cmd_resumeabo))
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO) & filters.User(user_id=ADMIN_CHAT_ID),

@@ -1,16 +1,20 @@
 # GrabDiscount — Contexte projet pour Claude Code
 
 ## C'est quoi ce projet ?
-Service de réductions Grab Food à Bangkok pour expatriés français.
-Modèle : abonnement **20€/mois** → accès canal privé Telegram → commandes illimitées.
+Service de réductions Grab Food en Thaïlande pour expatriés/voyageurs francophones.
+Deux formules : **Starter 20€/mois** (20 commandes) et **Pro 30€/mois** (illimité).
 Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte = 1 commande, jamais réutilisé).
 
 ## Modèle business
-- Client paie 20€/mois → reçoit lien d'invitation canal privé via le bot
-- Une fois dans le canal → peut commander via `/start` dans le bot
+- Plans : Starter 20€ (cap 20 commandes/mois) · Pro 30€ (illimité)
+- Parrainage : -5€ pour le filleul sur son 1er mois ET -5€ pour le parrain sur son prochain renouvellement (symétrique)
+- Pause abonnement : `/pauseabo` admin — ~1 mois/an offert (voyages), expiration prolongée d'autant
+- Client paie via Wise (Starter: `wise.com/pay/r/_XGgs7i3c4CThlg` · Pro: `wise.com/pay/r/ejA8VTB89QRBmwc`)
+- Paiement confirmé → admin `/invite USER_ID Prénom [starter|pro]` → lien canal privé + accès commandes
 - Admin reçoit screenshot Grab + compte Grab auto-assigné → passe la commande manuellement
 - Canal = communauté permanente (on ne kick jamais, même si expiré)
-- Accès commandes contrôlé par `subscribers.json`, pas par membership canal
+- Accès commandes contrôlé par `subscribers.json` + `can_order()`, pas par membership canal
+- Horaires service : 10h-00h
 
 ## Infrastructure
 - **VPS Contabo** : `82.197.70.190` (Ubuntu 24.04, 6 vCPU, 12GB RAM)
@@ -30,7 +34,7 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 - `start.py` → lance dashboard + bot sur VPS (systemd)
 - `dashboard.py` → interface web admin Flask (port 5001)
 - `bot.py` → bot Telegram clients (v20+, python-telegram-bot)
-- `subscribers.py` → gestion abonnés (is_active, add, expire, block, extend, increment_orders)
+- `subscribers.py` → gestion abonnés + plans + pause + parrainage (is_active, can_order, add_subscriber(plan=, parrain_id=), get_monthly_usage, pause_subscriber, resume_subscriber, get_referral_credit, get_filleuls, PLAN_CAPS, PLAN_PRICES)
 - `icloud_gen/run.py` → génère emails iCloud HME (nécessite cookie.txt valide)
 - `icloud_gen/auto_generate.sh` → wrapper LaunchAgent Mac (lock + notify + post-process)
 - `icloud_gen/post_process_emails.py` → associe identité FR + adresse Bangkok → accounts.json
@@ -44,12 +48,21 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 4. Admin : bouton "En cours" → "Livré" → compte marqué `used`
 
 ## Flux abonnement
-1. Prospect contacte bot → reçoit pitch abonnement
-2. Admin confirme paiement → `/invite USER_ID prenom` → lien Join Request créé + ajouté subscribers.json
-3. Client clique lien → Telegram envoie Join Request → bot vérifie `subscribers.is_active()` :
-   - ✅ abonné → `approve_chat_join_request` + message bienvenue
+1. Prospect `/start` bot → pitch 2 plans avec 3 boutons : [Starter 20€] [Pro 30€] [Parrainage]
+2. Clic bouton → bot renvoie lien Wise correspondant + instructions
+3. Client paie → envoie screenshot → admin confirme via `/invite USER_ID Prénom [starter|pro]`
+4. Le bot crée un lien Join Request, ajoute à `subscribers.json` avec le plan, notifie client + parrain si applicable
+5. Client clique lien → Telegram envoie Join Request → bot vérifie `subscribers.is_active()` :
+   - ✅ abonné → `approve_chat_join_request` + message bienvenue (DM)
    - ❌ non abonné → `decline_chat_join_request` + alerte admin
-4. Expiration → `/expire USER_ID` → ne peut plus commander, reste dans le canal (pas de kick)
+6. Commande → `start()` vérifie `can_order()` : cap_reached/paused/expired → message dédié + upsell Pro si Starter plein
+7. Parrainage : filleul ouvre `t.me/<bot>?start=ref_<parrain_id>` → parrain_id stocké dans `_pending_referrals` (RAM) → au prochain `/invite` de ce filleul, parrain_id est consommé, filleul a `had_referral_discount=True` (admin facture -5€), parrain reçoit `referral_credit_eur += 5`
+8. Pause : `/pauseabo USER_ID [jours=30]` → bloque commandes + prolonge `expires_at` d'autant
+9. Expiration → `/expire USER_ID` → ne peut plus commander, reste dans le canal (pas de kick)
+
+## Commandes bot
+**Client** : `/start` `/parrainage` `/aide` `/annuler` `/tchat`
+**Admin** : `/invite` `/expire` `/abonnes` `/block` `/renouveler` `/pauseabo` `/resumeabo` `/dispo` `/pause` `/statut` `/commandes` `/stats` `/canal` `/promo` `/annonce` `/suivi` `/rep`
 
 ## Flux automatique emails (Mac uniquement — cookie iCloud)
 1. LaunchAgent `com.grabdiscount.email-generation` → toutes les 65 min → `auto_generate.sh`
@@ -64,12 +77,14 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 Email iCloud + Identité (nom, prénom, adresse Bangkok) + Numéro tél (manuel)
 
 ## État actuel (2026-04-20)
-- ✅ Bot VPS actif, token rotation faite (ancien leak dans scraper.py nettoyé)
+- ✅ Bot VPS actif, token rotation faite
 - ✅ iCloud auto-gen Mac opérationnel (LaunchAgent + post_process)
 - ✅ Join Request auto-approval activé (bot admin du canal)
-- ⏳ **Pas encore lancé** — 0 client, 0 abonné, `subscribers.json` et `orders.json` inexistants
+- ✅ Plans Starter/Pro + parrainage (-5€/-5€) + pause abonnement — schéma + bot livrés
+- ⏳ Dashboard : pas encore de vue subscribers (Phase 2) — admin utilise `/abonnes` `/invite` etc. en attendant
+- ⏳ **Pas encore lancé** — 0 client, 0 abonné
 - 📋 ~81 comptes iCloud prêts (available), numéros tél à remplir
-- 🧪 Tests à faire : /start du bot, /invite depuis compte secondaire, flux commande complet
+- 🧪 Tests à faire : /start depuis compte secondaire, paiement Wise → /invite, parrainage link, cap_reached upsell
 
 ## Déployer une modification
 ```bash
@@ -102,7 +117,7 @@ systemctl status grabdiscount    # vérifier statut
 - `accounts.json` → comptes Grab (email, nom, tél, status: available/grab_ready/full/en_cours/used)
 - `orders.json` → commandes clients
 - `messages.json` → historique messages bot
-- `subscribers.json` → abonnés actifs (créé automatiquement au premier /invite)
+- `subscribers.json` → abonnés (user_id, plan, status, expires_at, paused_until, monthly_orders, parrain_id, filleuls[], referral_credit_eur, had_referral_discount)
 - `status.json` → statut admin dispo/pause
 
 ---
