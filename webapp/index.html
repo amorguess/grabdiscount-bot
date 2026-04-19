@@ -1262,8 +1262,10 @@ function updateMapLink(){
 applyT();
 showSkeletons(6); // immediate skeleton while JSON loads
 
-const _cachedRestos = localStorage.getItem('grab_restos_cache');
-const _cachedTs = localStorage.getItem('grab_restos_ts');
+const _CACHE_KEY = 'gd_restos_v2';
+const _CACHE_TS  = 'gd_restos_ts_v2';
+const _cachedRestos = localStorage.getItem(_CACHE_KEY);
+const _cachedTs = localStorage.getItem(_CACHE_TS);
 if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000){
   try{ ALL_RESTAURANTS = JSON.parse(_cachedRestos); }catch(e){ ALL_RESTAURANTS=[]; }
   buildRestos();
@@ -1274,8 +1276,8 @@ if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000)
     .then(data=>{
       ALL_RESTAURANTS = data.restaurants || [];
       try{
-        localStorage.setItem('grab_restos_cache', JSON.stringify(ALL_RESTAURANTS));
-        localStorage.setItem('grab_restos_ts', Date.now());
+        localStorage.setItem(_CACHE_KEY, JSON.stringify(ALL_RESTAURANTS));
+        localStorage.setItem(_CACHE_TS, Date.now());
       }catch(e){ /* quota dépassé — cache ignoré, données en mémoire */ }
       buildRestos();
       setupScrollObserver();
