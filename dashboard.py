@@ -3456,17 +3456,14 @@ function openPanel(email){
 
 function renderPanel(acc){
   const email = acc.email || '';
-  const name = escHtml(acc.full_name || (acc.prenom && acc.nom ? acc.prenom+' '+acc.nom : ''));
-  const addr = escHtml(acc.bangkok_addr || '');
-  const phone = escHtml(acc.phone || '');
+  const name = acc.full_name || (acc.prenom && acc.nom ? acc.prenom+' '+acc.nom : '');
+  const addr = acc.bangkok_addr || '';
+  const phone = acc.phone || '';
   const hasPhone = !!acc.phone;
   const isReady = acc.status === 'grab_ready' || acc.status === 'full';
 
-  // Steps checklist
-  const step1done = true; // always done (we're in the panel = claimed)
-  const step2done = isReady;
-  const step3done = hasPhone;
-  const step4done = isReady;
+  // Store values for copy buttons — no escaping needed in onclick
+  window._pd = { email: email, name: name, addr: addr };
 
   function stepIcon(done){ return done ? '✅' : '⬜'; }
 
@@ -3475,14 +3472,14 @@ function renderPanel(acc){
     <div class="slide-section" style="background:var(--s3)">
       <h4>📋 Étapes de création</h4>
       <div style="display:flex;flex-direction:column;gap:5px;font-size:.82rem;margin-top:4px">
-        <div>${stepIcon(step1done)} <span style="color:${step1done?'var(--green)':'var(--t2)'}">1. Compte pris en charge</span></div>
-        <div>⬜ <span style="color:var(--t2)">2. Acheter un numéro sur SMSPool → créer le compte Grab</span></div>
-        <div>${stepIcon(step3done)} <span style="color:${step3done?'var(--green)':'var(--t2)'}">3. Entrer le numéro utilisé ici</span></div>
-        <div>${stepIcon(step4done)} <span style="color:${step4done?'var(--green)':'var(--t2)'}">4. Valider le compte</span></div>
+        <div>✅ <span style="color:var(--green)">1. Compte pris en charge</span></div>
+        <div>⬜ <span style="color:var(--t2)">2. Créer le compte sur Grab (app)</span></div>
+        <div>${stepIcon(hasPhone)} <span style="color:${hasPhone?'var(--green)':'var(--t2)'}">3. Entrer le numéro de téléphone</span></div>
+        <div>${stepIcon(isReady)} <span style="color:${isReady?'var(--green)':'var(--t2)'}">4. Valider le compte</span></div>
       </div>
     </div>
 
-    <!-- Identité complète à copier -->
+    <!-- Identité -->
     <div class="slide-section">
       <h4>👤 Identité — à copier dans Grab</h4>
       <div style="display:flex;flex-direction:column;gap:8px">
@@ -3490,9 +3487,9 @@ function renderPanel(acc){
         <div style="background:var(--s1);border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div>
             <div style="font-size:.68rem;color:var(--t3);margin-bottom:2px">EMAIL</div>
-            <div class="mono" style="color:var(--purple);font-size:.85rem">${email}</div>
+            <div class="mono" style="color:var(--purple);font-size:.85rem">${escHtml(email)}</div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="copyText('${jsq(email)}')">📋 Copier</button>
+          <button class="btn btn-secondary btn-sm" onclick="copyText(window._pd.email)">📋 Copier</button>
         </div>
 
         <div style="background:var(--s1);border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
@@ -3506,43 +3503,33 @@ function renderPanel(acc){
         <div style="background:var(--s1);border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div>
             <div style="font-size:.68rem;color:var(--t3);margin-bottom:2px">NOM COMPLET</div>
-            <div style="color:var(--t1);font-weight:600;font-size:.88rem">${name}</div>
+            <div style="color:var(--t1);font-weight:600;font-size:.88rem">${escHtml(name)}</div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="copyText('${jsq(acc.full_name || '')}')">📋 Copier</button>
+          <button class="btn btn-secondary btn-sm" onclick="copyText(window._pd.name)">📋 Copier</button>
         </div>
 
         <div style="background:var(--s1);border-radius:8px;padding:10px 12px">
           <div style="font-size:.68rem;color:var(--t3);margin-bottom:4px">ADRESSE BANGKOK</div>
-          <div style="color:var(--t2);font-size:.78rem;line-height:1.5;margin-bottom:8px">${addr}</div>
-          <button class="btn btn-secondary btn-sm" onclick="copyText('${jsq(acc.bangkok_addr || '')}')">📋 Copier l'adresse</button>
+          <div style="color:var(--t2);font-size:.78rem;line-height:1.5;margin-bottom:8px">${escHtml(addr)}</div>
+          <button class="btn btn-secondary btn-sm" onclick="copyText(window._pd.addr)">📋 Copier l'adresse</button>
         </div>
 
       </div>
-    </div>
-
-    <!-- Liens rapides -->
-    <div class="slide-section" style="background:var(--s3)">
-      <h4>🔗 Étape 2 — Liens rapides</h4>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-        <a href="https://www.smspool.net/purchase-sms" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">📱 Acheter numéro SMSPool</a>
-        <a href="https://food.grab.com/th/en/" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">🟢 Ouvrir Grab</a>
-      </div>
-      <div style="font-size:.72rem;color:var(--t3);margin-top:6px">Achetez un numéro thaï (+66) sur SMSPool, puis créez le compte Grab avec l'identité ci-dessus.</div>
     </div>
 
     <!-- Numéro de téléphone -->
     <div class="slide-section">
       <h4>📱 Étape 3 — Numéro de téléphone</h4>
       <div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">
-        Entrez le numéro thaï que vous avez utilisé pour créer le compte Grab (+66XXXXXXXXX).
+        Numéro thaï utilisé lors de la création du compte Grab (+66XXXXXXXXX).
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <input class="input" id="phoneInput" type="tel" placeholder="+66XXXXXXXXX"
-          value="${phone}" style="flex:1"
+          value="${escHtml(phone)}" style="flex:1"
           onkeydown="if(event.key==='Enter')savePhone()">
         <button class="btn btn-primary btn-sm" onclick="savePhone()">💾 Sauvegarder</button>
       </div>
-      ${hasPhone ? `<div style="font-size:.72rem;color:var(--green);margin-top:6px">✅ Numéro enregistré : ${phone}</div>` : ''}
+      ${hasPhone ? '<div style="font-size:.72rem;color:var(--green);margin-top:6px">✅ Numéro enregistré : '+escHtml(phone)+'</div>' : ''}
     </div>
 
     <!-- Mails iCloud inline -->
@@ -3561,12 +3548,12 @@ function renderPanel(acc){
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" id="validateBtn" onclick="validateAccount()"
-          ${!hasPhone ? 'disabled' : ''} style="flex:1;padding:10px">
+          ${hasPhone ? '' : 'disabled'} style="flex:1;padding:10px">
           🎉 Compte Grab créé — Valider
         </button>
         <button class="btn btn-danger btn-sm" onclick="unclaimAccount()" title="Libérer sans valider">↩ Libérer</button>
       </div>
-      ${!hasPhone ? '<div style="font-size:.72rem;color:var(--orange);margin-top:8px">⚠ Enregistrez d\'abord le numéro de téléphone (étape 3)</div>' : ''}
+      ${hasPhone ? '' : '<div style="font-size:.72rem;color:var(--orange);margin-top:8px">⚠ Enregistrez dabord le numero (etape 3)</div>'}
     </div>
   `;
 }
