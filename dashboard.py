@@ -18,6 +18,13 @@ app = Flask(__name__)
 # Derrière Cloudflare + nginx : on fait confiance aux headers X-Forwarded-*
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_for=1)
 
+@app.after_request
+def no_cache(response):
+    if request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+    return response
+
 # Secret Flask : obligatoire depuis .env, jamais hardcodé
 _secret = os.environ.get("DASHBOARD_SECRET")
 if not _secret:
