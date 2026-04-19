@@ -558,7 +558,7 @@ def _make_unique_identity(email: str, used_names: set) -> dict:
     try:
         from identity_gen import generate_identity, get_bangkok_address
     except ImportError:
-        return {"grab_prenom": "", "grab_nom": "", "adresse_bangkok": ""}
+        return {"grab_prenom": "", "grab_nom": "", "grab_name": "", "grab_bangkok_addr": ""}
     suffix = 0
     while True:
         seed = email if suffix == 0 else f"{email}_{suffix}"
@@ -566,16 +566,18 @@ def _make_unique_identity(email: str, used_names: set) -> dict:
         key = (ident["prenom"], ident["nom"])
         if key not in used_names:
             used_names.add(key)
-            adresse = get_bangkok_address(seed=seed)
+            addr = get_bangkok_address(seed=seed)
             return {
-                "grab_prenom":    ident["prenom"],
-                "grab_nom":       ident["nom"],
-                "adresse_bangkok": adresse,
+                "grab_prenom":      ident["prenom"],
+                "grab_nom":         ident["nom"],
+                "grab_name":        ident["full_name"],
+                "grab_bangkok_addr": addr,
             }
         suffix += 1
         if suffix > 100:
             used_names.add(key)
-            return {"grab_prenom": ident["prenom"], "grab_nom": ident["nom"], "adresse_bangkok": get_bangkok_address(seed=seed)}
+            addr = get_bangkok_address(seed=seed)
+            return {"grab_prenom": ident["prenom"], "grab_nom": ident["nom"], "grab_name": ident["full_name"], "grab_bangkok_addr": addr}
 
 
 def _reload_accounts():
