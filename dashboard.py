@@ -2189,7 +2189,8 @@ function nav(p){
     if(el) el.style.display=id===p?(id==='overview'?'block':'flex'):'none';
   });
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
-  if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList();}
+  if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList(); _startChatPoll();}
+  else { _stopChatPoll(); }
   if(p==='accounts'){document.getElementById('page-accounts').style.display='flex'; loadPacks(); loadAutoGen(); orchStartPolling();}
   // Scroll top on mobile
   window.scrollTo(0,0);
@@ -2400,11 +2401,53 @@ async function quickReply(chatId){
 }
 
 // ── CHAT ──────────────────────────────────────────────────
-async function loadMsgs(){
-  const r=await fetch('/api/messages'); _msgs=await r.json();
-  renderConvList();
-  if(_activeChat) renderChat(_activeChat);
+// ── CHAT — état interne ──────────────────────────────────
+let _chatPollTimer = null;
+let _chatSoundEnabled = true;
+let _prevUnreadTotal = 0;
+const _QUICK_REPLIES = [
+  '🛵 En cours, on s\'en occupe !',
+  '✅ Commande livrée ! Bon appétit 🍽️',
+  '📸 Envoie ton reçu de paiement Wise',
+  '⏳ Prêt dans 5 min, on passe la commande',
+  '❌ Problème avec ta commande, on te recontacte',
+];
+
+function _chatBeep(){
+  if(!_chatSoundEnabled) return;
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const o=ctx.createOscillator(); const g=ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value=880; o.type='sine';
+    g.gain.setValueAtTime(0.3,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.3);
+    o.start(); o.stop(ctx.currentTime+0.3);
+  }catch(e){}
 }
+
+async function loadMsgs(silent=false){
+  try{
+    const r=await fetch('/api/messages'); const fresh=await r.json();
+    // Détecter nouveaux messages non lus
+    const newUnread=Object.values(fresh).reduce((s,c)=>s+(c.unread||0),0);
+    if(!silent && newUnread > _prevUnreadTotal) _chatBeep();
+    _prevUnreadTotal=newUnread;
+    _msgs=fresh;
+    renderConvList();
+    if(_activeChat) _renderChatSmart(_activeChat);
+  }catch(e){}
+}
+
+function _renderChatSmart(uid){
+  const c=_msgs[uid]; if(!c)return;
+  const msgs=document.getElementById('chatMsgs');
+  // Garde le scroll si l'utilisateur a scrollé vers le haut
+  const atBottom = msgs ? msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight < 60 : true;
+  renderChat(uid);
+  if(atBottom) setTimeout(()=>{const el=document.getElementById('chatMsgs');if(el)el.scrollTop=el.scrollHeight;},20);
+}
+
 function renderConvList(){
   const container=document.getElementById('convList'); if(!container)return;
   const entries=Object.entries(_msgs).sort((a,b)=>{
@@ -2418,22 +2461,25 @@ function renderConvList(){
     const init=(c.name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
     const colors=['#3b82f6','#8b5cf6','#06b6d4','#f59e0b','#ef4444'];
     const col=colors[uid.charCodeAt(0)%colors.length];
+    const unread=c.unread||0;
     return `<div class="conv-item${_activeChat===uid?' active':''}" onclick="selectChat('${uid}')">
       <div class="avatar" style="background:${col}20;color:${col}">${init}</div>
       <div style="flex:1;min-width:0">
-        <div class="conv-name">${c.name||uid}</div>
-        <div class="conv-prev">${last?.from==='admin'?'Vous : ':''}${last?.text||'…'}</div>
+        <div class="conv-name">${escHtml(c.name||uid)}</div>
+        <div class="conv-prev">${last?.from==='admin'?'Vous : ':''}${escHtml(last?.text||'…')}</div>
       </div>
-      ${(c.unread||0)>0?`<span class="unread-badge">${c.unread}</span>`:''}
+      ${unread>0?`<span class="unread-badge">${unread}</span>`:''}
     </div>`;
   }).join('');
 }
+
 function selectChat(uid){
   _activeChat=uid;
   renderConvList();
   renderChat(uid);
   markRead(uid);
 }
+
 function renderChat(uid){
   const c=_msgs[uid]; if(!c)return;
   const win=document.getElementById('chatWindow'); if(!win)return;
@@ -2444,32 +2490,66 @@ function renderChat(uid){
       <div class="msg-bubble msg-${m.from==='admin'?'admin':'client'}">${escHtml(m.text||'')}</div>
       <div class="msg-time">${escHtml(m.heure||'')}</div>
     </div>`).join('');
+  const quickBtns=_QUICK_REPLIES.map(t=>
+    `<button onclick="useQuickReply('${safeUid}','${t.replace(/'/g,"\\'")}')"
+      style="background:var(--s3);border:none;border-radius:20px;padding:5px 12px;color:var(--t2);
+             font-size:.75rem;cursor:pointer;white-space:nowrap;flex-shrink:0"
+      onmouseover="this.style.background='var(--s4)'" onmouseout="this.style.background='var(--s3)'"
+    >${escHtml(t)}</button>`
+  ).join('');
   win.innerHTML=`
     <div class="chat-header">
       <div class="avatar" style="background:#3b82f620;color:#3b82f6;width:36px;height:36px;font-size:.85rem">${init}</div>
-      <div><div style="font-weight:700">${escHtml(c.name||uid)}</div><div style="font-size:.75rem;color:var(--t3)">${escHtml(c.username||'')} · ID : ${safeUid}</div></div>
+      <div style="flex:1"><div style="font-weight:700">${escHtml(c.name||uid)}</div>
+        <div style="font-size:.75rem;color:var(--t3)">${escHtml(c.username||'')} · ID : ${safeUid}</div></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--t3);cursor:pointer">
+        <input type="checkbox" ${_chatSoundEnabled?'checked':''} onchange="_chatSoundEnabled=this.checked"> 🔔
+      </label>
     </div>
-    <div class="chat-msgs" id="chatMsgs">${msgs||'<div style="color:var(--t3);margin:auto">Aucun message</div>'}</div>
+    <div class="chat-msgs" id="chatMsgs">${msgs||'<div style="color:var(--t3);margin:auto;padding-top:40px">Aucun message</div>'}</div>
+    <div style="padding:8px 16px;border-top:1px solid var(--s3);display:flex;gap:6px;overflow-x:auto;scrollbar-width:none">${quickBtns}</div>
     <div class="chat-input-row">
-      <textarea class="chat-textarea" id="chatInput" rows="2" placeholder="Votre réponse… (Ctrl+Enter pour envoyer)"
-        onkeydown="if(event.ctrlKey&&event.key==='Enter')sendReply('${safeUid}')"></textarea>
+      <textarea class="chat-textarea" id="chatInput" rows="2" placeholder="Répondre… (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReply('${safeUid}')}"></textarea>
       <button class="send-btn" onclick="sendReply('${safeUid}')">➤</button>
     </div>`;
-  setTimeout(()=>{const el=document.getElementById('chatMsgs');if(el)el.scrollTop=el.scrollHeight;},50);
+  setTimeout(()=>{const el=document.getElementById('chatMsgs');if(el)el.scrollTop=el.scrollHeight;},30);
 }
+
+function useQuickReply(uid, text){
+  const inp=document.getElementById('chatInput');
+  if(inp){ inp.value=text; inp.focus(); }
+}
+
 async function sendReply(uid){
   const inp=document.getElementById('chatInput');
   const text=(inp?.value||'').trim(); if(!text)return;
+  // Optimistic : affiche le message immédiatement
+  const k=String(uid);
+  if(_msgs[k]){
+    const now=new Date();
+    const hh=String(now.getHours()).padStart(2,'0'), mm=String(now.getMinutes()).padStart(2,'0');
+    const dd=String(now.getDate()).padStart(2,'0'), mo=String(now.getMonth()+1).padStart(2,'0');
+    _msgs[k].messages=_msgs[k].messages||[];
+    _msgs[k].messages.push({text,ts:now.toISOString(),heure:`${dd}/${mo} à ${hh}:${mm}`,from:'admin',read:true});
+    renderChat(uid);
+    setTimeout(()=>{const el=document.getElementById('chatMsgs');if(el)el.scrollTop=el.scrollHeight;},20);
+  }
   inp.value='';
   const r=await fetch('/api/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:parseInt(uid),text})});
   const d=await r.json();
-  toast(d.ok?'✅ Envoyé':'❌ Erreur',d.ok);
-  await loadMsgs();
+  if(!d.ok) toast('❌ Erreur envoi',false);
+  await loadMsgs(true);
 }
+
 async function markRead(uid){
   await fetch('/api/mark_read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid})});
-  if(_msgs[uid]) _msgs[uid].unread=0;
+  if(_msgs[uid]){ _msgs[uid].unread=0; _prevUnreadTotal=Math.max(0,_prevUnreadTotal-(_msgs[uid].unread||0)); }
 }
+
+// Auto-refresh chat toutes les 3s quand tab chat visible
+function _startChatPoll(){ if(_chatPollTimer)return; _chatPollTimer=setInterval(()=>{if(!document.hidden)loadMsgs(true);},3000); }
+function _stopChatPoll(){ clearInterval(_chatPollTimer); _chatPollTimer=null; }
 
 // ── AUTO-GEN ──────────────────────────────────────────────
 let _autoGenEnabled=false;
@@ -3494,4 +3574,5 @@ if __name__ == "__main__":
     print(f"🤖 Auto-génération iCloud HME activée — 5 emails toutes les 65 min")
     print(f"📊 Résumé quotidien Telegram activé — 8h Bangkok")
     print(f"🛵 GrabDiscount QG → http://localhost:{a.port}   |   pwd: {DASHBOARD_PWD}")
-    app.run(host="0.0.0.0", port=a.port, debug=False)
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=a.port, threads=8)

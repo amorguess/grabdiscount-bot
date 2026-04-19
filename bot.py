@@ -253,16 +253,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ]]
 
     await update.message.reply_text(
-        "╔═══════════════════════════╗\n"
-        "║   🍽️  GRABDISCOUNT        ║\n"
-        "║   Livraison -50%          ║\n"
-        "╚═══════════════════════════╝\n\n"
-        "Commandez sur *Grab* à *moitié prix* grâce à notre service de conciergerie. 🚀\n\n"
-        "▸ Vous choisissez votre panier\n"
-        "▸ Vous payez 50% du montant\n"
-        "▸ On commande pour vous ✅\n\n"
+        "🛵 *GrabDiscount* — Livraison à *-50%* à Bangkok\n\n"
+        "Comment ça marche :\n"
+        "✅ Tu choisis ton resto sur Grab\n"
+        "✅ Tu payes *50% du montant* (ex : 500฿ pour 1 000฿ de commande)\n"
+        "✅ On commande pour toi — livraison en 30-45 min\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "👇 *Appuyez pour ouvrir l'app :*",
+        "👇 *Lance l'app pour commander :*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -1309,14 +1306,12 @@ def main() -> None:
                     logger.error(f"Forward hors_session : {e}")
 
             await update.message.reply_text(
-                "✅ *Message transmis à notre équipe !*\n\n"
-                "Nous vous répondrons très rapidement. 🙏\n\n"
-                "_Pour passer une commande : /start_",
+                "✅ Message reçu — on vous répond très rapidement 🙏",
                 parse_mode="Markdown",
             )
         else:
             await update.message.reply_text(
-                "👋 Tapez /start pour passer une commande !",
+                "👋 Bonjour ! Tapez /start pour passer une commande.",
                 parse_mode="Markdown",
             )
 

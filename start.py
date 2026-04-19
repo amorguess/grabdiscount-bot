@@ -131,7 +131,8 @@ def run_dashboard():
         time.sleep(0.5)               # laisse le temps au port de se libérer
         print(f"[DASH] 🛵 Dashboard démarré sur port {PORT}", flush=True)
         _flask_ready = True
-        dashboard.app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+        from waitress import serve
+        serve(dashboard.app, host="0.0.0.0", port=PORT, threads=8)
     except Exception as e:
         print(f"[DASH] ❌ Erreur : {e}", flush=True)
 
