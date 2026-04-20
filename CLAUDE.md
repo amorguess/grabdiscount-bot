@@ -28,6 +28,7 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 - Token : dans `.env` → `BOT_TOKEN`
 - Admin chat ID : `8711205448`
 - Canal : `-1003910907077`
+- Lien invite canal (partagé, filtré par handle_join_request) : `https://t.me/+MLazLZnaShM3OWE1`
 - Le bot tourne comme subprocess de `start.py` via systemd
 
 ## Fichiers principaux

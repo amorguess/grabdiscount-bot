@@ -50,6 +50,11 @@ WISE_LINK_STARTER = "https://wise.com/pay/r/_XGgs7i3c4CThlg"   # 20€
 WISE_LINK_PRO     = "https://wise.com/pay/r/ejA8VTB89QRBmwc"   # 30€
 PLAN_LABEL = {"starter": "Starter — 20€", "pro": "Pro — 30€"}
 
+# ── Canal communauté (Join Request filtré par handle_join_request) ──
+# Seuls les abonnés actifs sont auto-approuvés — les prospects qui
+# cliquent déclenchent une alerte admin (warm lead).
+COMMUNITY_CHANNEL_LINK = "https://t.me/+MLazLZnaShM3OWE1"
+
 # Parrains détectés via ?start=ref_<id> — clé = filleul_id, val = parrain_id
 _pending_referrals: dict[int, int] = {}
 
@@ -1051,10 +1056,17 @@ async def cmd_rep(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_canal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sans argument : affiche le lien du canal. Avec args : poste un message dedans."""
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
     if not context.args:
-        await update.message.reply_text("⚠️ *Usage :*\n`/canal votre message`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "📢 *Canal communauté GrabDiscount*\n\n"
+            f"🔗 {COMMUNITY_CHANNEL_LINK}\n\n"
+            "_Usage pour poster :_ `/canal votre message`",
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
         return
     msg = " ".join(context.args)
     try:
@@ -1068,12 +1080,15 @@ async def cmd_promo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
     promo_text = (
-        "🛵 *GrabDiscount — Offre du moment !*\n\n"
-        "🎁 Commandezvia notre service et *économisez jusqu'à 50%* sur vos repas Grab !\n\n"
-        "📲 Démarrez votre commande ici 👇\n"
-        "→ @GrabDiscountBot\n\n"
-        "🏙️ Service disponible à Bangkok\n"
-        "⏱️ Réponse en moins de 5 minutes"
+        "🛵 *GrabDiscount — Offre du moment*\n\n"
+        "🎁 Économise *jusqu'à 50%* sur tes repas Grab dans toute la Thaïlande.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🥢 *Starter* — 20€/mois · 20 commandes\n"
+        "♾️ *Pro* — 30€/mois · illimité\n"
+        "🎁 *Parrainage* — -5€ pour toi ET ton pote\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📲 Pour commander : @GrabDiscountBot\n"
+        "🇫🇷 Service 10h-00h · Réponse < 5 min"
     )
     try:
         await context.bot.send_message(chat_id=CHANNEL_ID, text=promo_text, parse_mode="Markdown")
@@ -1086,19 +1101,22 @@ async def cmd_annonce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
     annonce = (
-        "🛵 *Bienvenue sur GrabDiscount !*\n\n"
-        "Nous commandons sur Grab à votre place avec nos comptes premium "
-        "et vous faisons profiter de *-50% sur tous vos repas*.\n\n"
+        "🛵 *Bienvenue sur GrabDiscount*\n\n"
+        "On commande sur Grab à ta place avec nos comptes premium "
+        "et tu profites de *-50% sur tous tes repas*.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "💡 *Comment ça marche ?*\n"
-        "1️⃣ Vous choisissez votre restaurant sur Grab\n"
-        "2️⃣ Vous envoyez le screenshot de votre panier\n"
-        "3️⃣ On passe la commande pour vous\n"
-        "4️⃣ Vous recevez votre repas 🍜\n\n"
+        "1️⃣ Tu choisis ton restaurant sur Grab\n"
+        "2️⃣ Tu envoies le screenshot de ton panier + adresse\n"
+        "3️⃣ On passe la commande pour toi\n"
+        "4️⃣ Tu reçois ton repas 🍜\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📲 Pour commander : @GrabDiscountBot\n\n"
-        "🇫🇷 Service en français · 🏙️ Bangkok\n"
-        "📢 Activez les notifications pour nos offres !"
+        "🥢 *Starter* 20€ · 20 cmd/mois\n"
+        "♾️ *Pro* 30€ · illimité\n"
+        "🎁 Parrainage : -5€ pour toi ET ton pote\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📲 Pour commander : @GrabDiscountBot\n"
+        "🇫🇷 Service français · 🇹🇭 Toute la Thaïlande · 🕙 10h-00h"
     )
     try:
         await context.bot.send_message(chat_id=CHANNEL_ID, text=annonce, parse_mode="Markdown")
@@ -1142,21 +1160,9 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # Parrain détecté via /start=ref_X plus tôt
     parrain_id = _pending_referrals.pop(user_id, None)
 
-    # Lien avec demande d'adhésion : le bot valide chaque entrée via
-    # handle_join_request (vérifie subscribers.is_active). Réutilisable
-    # mais sûr — seul un abonné actif peut entrer.
-    expire_date = datetime.now() + timedelta(days=30)
-    try:
-        link_obj = await context.bot.create_chat_invite_link(
-            chat_id=CHANNEL_ID,
-            creates_join_request=True,
-            expire_date=expire_date,
-            name=f"{plan.capitalize()} {prenom} ({user_id})",
-        )
-        invite_link = link_obj.invite_link
-    except Exception as e:
-        await update.message.reply_text(f"❌ Erreur création lien canal : {e}")
-        return
+    # Lien canal communauté — partagé entre tous les abonnés.
+    # handle_join_request approuve uniquement si subscribers.is_active().
+    invite_link = COMMUNITY_CHANNEL_LINK
 
     # Récupérer le profil Telegram si possible
     try:
@@ -1195,16 +1201,17 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 f"{cap_line}"
                 f"{ref_note}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "👇 *Rejoins notre canal privé :*\n"
-                f"{invite_link}\n\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Une fois dans le canal, tape /start dans ce bot "
-                "pour passer ta première commande 🛵\n\n"
+                "📢 *Rejoins le canal communauté* pour les actus, promos "
+                "et nouveautés du service 👇\n\n"
+                "Puis tape /start ici pour passer ta première commande 🛵\n\n"
                 f"📅 Abonnement valable jusqu'au *{exp_str}*\n"
                 "_-50% sur tes repas Grab dans toute la Thaïlande_ 🍜\n\n"
                 "🎁 Tape /parrainage pour filer -5€ à un pote et en gagner -5€ aussi."
             ),
             parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📢 Rejoindre le canal", url=invite_link),
+            ]]),
         )
         admin_note = ""
         if parrain_applied:
