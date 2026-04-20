@@ -153,6 +153,152 @@ async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | No
         except Exception:
             pass
 
+# ──────────────────────────────────────────────────────────
+#  ONBOARDING-TAG — data collection post-/invite
+# ──────────────────────────────────────────────────────────
+
+ONBOARDING_QUESTIONS = [
+    {
+        "field": "district",
+        "text": (
+            "🏙️ *Où habites-tu ?*\n\n"
+            "_Ça nous aide à optimiser les livraisons et partager les bons "
+            "plans restos de ton quartier._"
+        ),
+        "options": [
+            ("🌃 Sukhumvit",          "sukhumvit"),
+            ("🌆 Silom / Sathorn",    "silom_sathorn"),
+            ("✨ Thonglor / Ekkamai", "thonglor_ekkamai"),
+            ("🏛️ Ari / Phahon",       "ari"),
+            ("🏖️ Phuket",             "phuket"),
+            ("🏝️ Pattaya / Samui",    "pattaya_samui"),
+            ("⛰️ Chiang Mai",         "chiangmai"),
+            ("📍 Autre",              "autre"),
+        ],
+    },
+    {
+        "field": "source",
+        "text": (
+            "📣 *Comment as-tu découvert GrabDiscount ?*\n\n"
+            "_Ça nous aide à savoir où investir pour toucher d'autres gens "
+            "comme toi._"
+        ),
+        "options": [
+            ("👥 Un pote (parrainage)",     "pote_parrainage"),
+            ("📸 Instagram",                "instagram"),
+            ("📘 Facebook / groupe expats", "facebook"),
+            ("🎵 TikTok",                   "tiktok"),
+            ("🔍 Google / recherche",       "google"),
+            ("📰 Presse / article",         "presse"),
+            ("🎯 Autre",                    "autre"),
+        ],
+    },
+    {
+        "field": "frequency_stated",
+        "text": (
+            "🍜 *Tu comptes commander à quelle fréquence ?*\n\n"
+            "_Sans engagement — juste pour qu'on anticipe ton usage._"
+        ),
+        "options": [
+            ("🌱 1-2 / semaine",       "1-2"),
+            ("🔥 3-5 / semaine",       "3-5"),
+            ("🚀 6+ / semaine",        "6plus"),
+            ("✈️ Ponctuel (voyage)",   "ponctuel"),
+        ],
+    },
+]
+
+
+def _build_onboarding_markup(step: int) -> InlineKeyboardMarkup:
+    q = ONBOARDING_QUESTIONS[step]
+    rows = []
+    opts = q["options"]
+    for i in range(0, len(opts), 2):
+        rows.append([
+            InlineKeyboardButton(label, callback_data=f"ob:{step}:{val}")
+            for label, val in opts[i:i+2]
+        ])
+    rows.append([InlineKeyboardButton("⏭ Passer", callback_data=f"ob:{step}:skip")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _send_onboarding_question(bot, user_id: int, step: int) -> bool:
+    if step < 0 or step >= len(ONBOARDING_QUESTIONS):
+        return False
+    q = ONBOARDING_QUESTIONS[step]
+    prefix = f"*Question {step+1}/{len(ONBOARDING_QUESTIONS)}* · 30 sec ⏱️\n\n"
+    try:
+        await bot.send_message(
+            chat_id=user_id,
+            text=prefix + q["text"],
+            parse_mode="Markdown",
+            reply_markup=_build_onboarding_markup(step),
+        )
+        return True
+    except Exception as e:
+        logger.error(f"onboarding send step={step} user={user_id}: {e}")
+        return False
+
+
+async def onboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle ob:<step>:<value> — stores answer, sends next question."""
+    q = update.callback_query
+    await q.answer()
+    try:
+        _, step_s, value = (q.data or "").split(":", 2)
+        step = int(step_s)
+    except Exception:
+        return
+    if step < 0 or step >= len(ONBOARDING_QUESTIONS):
+        return
+
+    user_id = q.from_user.id
+    field   = ONBOARDING_QUESTIONS[step]["field"]
+
+    if value != "skip":
+        subscribers.set_onboarding_field(user_id, field, value)
+
+    # Strip keyboard on the answered question
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    next_step = step + 1
+    if next_step < len(ONBOARDING_QUESTIONS):
+        await _send_onboarding_question(context.bot, user_id, next_step)
+    else:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🙏 *Merci !*\n\n"
+                    "Tu peux maintenant passer ta commande avec /start 🛵\n\n"
+                    "_Tes infos restent privées et servent uniquement à "
+                    "améliorer le service._"
+                ),
+                parse_mode="Markdown",
+            )
+            # Notifier l'admin en temps réel qu'un user vient de finir l'onboarding
+            sub = subscribers.get_subscriber(user_id)
+            if sub:
+                district = sub.get("district") or "—"
+                source   = sub.get("source") or "—"
+                freq     = sub.get("frequency_stated") or "—"
+                await context.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=(
+                        f"🎯 *Onboarding complété* · `{user_id}`\n"
+                        f"   🏙️ {district}\n"
+                        f"   📣 {source}\n"
+                        f"   🍜 {freq}"
+                    ),
+                    parse_mode="Markdown",
+                )
+        except Exception:
+            pass
+
+
 def get_statut() -> bool:
     try:
         with open(STATUS_FILE, "r") as f:
@@ -1177,6 +1323,9 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 )
             except Exception:
                 pass
+        # Trigger onboarding-tag (si pas déjà complété)
+        if not subscribers.is_onboarded(user_id):
+            await _send_onboarding_question(context.bot, user_id, 0)
     except Exception as e:
         await update.message.reply_text(
             f"⚠️ Abonné ajouté mais erreur envoi message : {e}"
@@ -1470,6 +1619,44 @@ async def cmd_resumeabo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def cmd_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stats agrégées onboarding-tag (district, source, fréquence). Admin only."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    stats = subscribers.get_onboarding_stats()
+    total      = stats.get("total", 0)
+    onboarded  = stats.get("onboarded", 0)
+    partial    = stats.get("partial", 0)
+    missing    = max(0, total - onboarded - partial)
+
+    def _fmt_counter(counter, top: int = 10) -> str:
+        items = counter.most_common(top)
+        if not items:
+            return "  _aucune donnée_"
+        tot = sum(counter.values()) or 1
+        lines = []
+        for k, v in items:
+            pct = (v * 100) / tot
+            lines.append(f"  • {k}: *{v}* ({pct:.0f}%)")
+        return "\n".join(lines)
+
+    msg = (
+        "📊 *ONBOARDING STATS*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 Total abonnés : *{total}*\n"
+        f"✅ Onboardés     : *{onboarded}*\n"
+        f"🔶 Partiels      : *{partial}*\n"
+        f"⬜ Aucun tag     : *{missing}*\n\n"
+        "🏙️ *Zones*\n"
+        f"{_fmt_counter(stats.get('district'))}\n\n"
+        "📣 *Sources*\n"
+        f"{_fmt_counter(stats.get('source'))}\n\n"
+        "🍜 *Fréquences*\n"
+        f"{_fmt_counter(stats.get('frequency_stated'))}"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
 async def aide(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "╔═══════════════════════════╗\n"
@@ -1670,6 +1857,8 @@ def main() -> None:
     app.add_handler(CommandHandler("parrainage", cmd_parrainage))
     app.add_handler(CommandHandler("pauseabo",   cmd_pauseabo))
     app.add_handler(CommandHandler("resumeabo",  cmd_resumeabo))
+    app.add_handler(CommandHandler("onboarding", cmd_onboarding))
+    app.add_handler(CallbackQueryHandler(onboard_callback, pattern=r"^ob:"))
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO) & filters.User(user_id=ADMIN_CHAT_ID),

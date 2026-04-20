@@ -19,7 +19,11 @@ subscribers.json dans /data/
     "parrain_id": null,           // qui m'a parrainé
     "filleuls": [],               // qui j'ai parrainé
     "referral_credit_eur": 0,     // EUR crédités via parrainage (à déduire au prochain renouvellement)
-    "had_referral_discount": false // filleul : -5€ déjà consommé sur 1er mois
+    "had_referral_discount": false, // filleul : -5€ déjà consommé sur 1er mois
+    "district": null,             // onboarding-tag : quartier/zone
+    "source": null,               // onboarding-tag : canal d'acquisition
+    "frequency_stated": null,     // onboarding-tag : fréquence annoncée
+    "onboarded_at": null          // ISO string — rempli quand les 3 tags sont complets
   }
 ]
 """
@@ -436,3 +440,54 @@ def get_filleuls(user_id: int) -> list[int]:
     """Retourne la liste des user_id filleuls du parrain."""
     s = get_subscriber(user_id)
     return list(s.get("filleuls") or []) if s else []
+
+
+# ── Onboarding-tag ─────────────────────────────────────────
+
+ONBOARDING_FIELDS = ("district", "source", "frequency_stated")
+
+
+def set_onboarding_field(user_id: int, field: str, value: str) -> bool:
+    """Stocke une réponse d'onboarding. Retourne True si sauvegardé.
+    Quand les 3 champs sont remplis, marque onboarded_at automatiquement.
+    """
+    if field not in ONBOARDING_FIELDS:
+        return False
+    subs = _read_subs()
+    for i, s in enumerate(subs):
+        if s.get("user_id") == user_id:
+            subs[i][field] = value
+            if (all(subs[i].get(f) for f in ONBOARDING_FIELDS)
+                    and not subs[i].get("onboarded_at")):
+                subs[i]["onboarded_at"] = datetime.now().strftime(TS_FMT)
+            _write_subs(subs)
+            return True
+    return False
+
+
+def is_onboarded(user_id: int) -> bool:
+    s = get_subscriber(user_id)
+    return bool(s and s.get("onboarded_at"))
+
+
+def get_onboarding_stats() -> dict:
+    """Compte agrégé district / source / frequency_stated sur tous les abonnés."""
+    from collections import Counter
+    subs = _read_subs()
+    stats: dict = {
+        "total": len(subs),
+        "onboarded": 0,
+        "partial": 0,
+    }
+    for f in ONBOARDING_FIELDS:
+        stats[f] = Counter()
+    for s in subs:
+        if s.get("onboarded_at"):
+            stats["onboarded"] += 1
+        elif any(s.get(f) for f in ONBOARDING_FIELDS):
+            stats["partial"] += 1
+        for f in ONBOARDING_FIELDS:
+            v = s.get(f)
+            if v:
+                stats[f][v] += 1
+    return stats
