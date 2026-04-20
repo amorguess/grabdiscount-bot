@@ -1,0 +1,142 @@
+[project]
+name = "grabdiscount"
+version = "0.1.0"
+description = "Service de réductions Grab Food pour expatriés francophones en Thaïlande (Telegram bot + dashboard admin)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "amorguess" }]
+dependencies = [
+    "python-telegram-bot==21.3",
+    "httpx[asyncio]==0.28.1",
+    "httpcore[asyncio]==1.0.9",
+    "requests==2.32.5",
+    "schedule==1.2.2",
+    "beautifulsoup4==4.14.3",
+    "flask==3.1.0",
+    "python-dotenv==1.0.1",
+    "aiohttp",
+    "certifi",
+    "waitress",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+monitoring = [
+    "sentry-sdk[flask]>=2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Pas de packages à builder pour l'instant — code à plat (bot.py, dashboard.py, etc.)
+# Phase 2 migrera vers app/ et on activera packages=["app"]
+py-modules = []
+
+# ─── Ruff (lint + format) ────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+# Phase 1: on ne lint QUE le nouveau code (app/ + tests/).
+# Le code legacy (bot.py, dashboard.py, subscribers.py, icloud_gen/, etc.)
+# sera nettoyé progressivement lors de son extraction en Phase 2/3.
+extend-exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "bot.py",
+    "dashboard.py",
+    "subscribers.py",
+    "start.py",
+    "monitoring.py",
+    "restaurant_scraper.py",
+    "icloud_imap.py",
+    "grab_auto",
+    "grab_gen",
+    "icloud_gen",
+    "identity_gen",
+    "sms_gen",
+    "lib",
+    "webapp",
+    "backups",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "SIM",  # simplify
+    "C4",   # comprehensions
+]
+ignore = [
+    "E501",  # line too long (on laisse ruff format gérer)
+    "B008",  # function call in default arg (Flask/FastAPI pattern)
+    "SIM108", # ternary (parfois moins lisible)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ─── Pytest ──────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "slow: tests lents (réseau, I/O)",
+    "integration: tests d'intégration (nécessitent services externes)",
+]
+
+# ─── Coverage ────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "venv/*",
+    ".venv/*",
+    "grab_auto/*",
+    "grab_gen/*",
+    "icloud_gen/chrome_selenium_profile/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+# ─── Mypy (progressive typing) ───────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false    # passera à true module par module
+ignore_missing_imports = true
+exclude = ["venv/", ".venv/", "grab_auto/", "grab_gen/", "icloud_gen/chrome_selenium_profile/"]
