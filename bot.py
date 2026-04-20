@@ -27,7 +27,10 @@ try:
 except ImportError:
     pass
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo,
+    MenuButtonCommands, MenuButtonWebApp, MenuButtonDefault,
+)
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, ChatJoinRequestHandler,
@@ -93,6 +96,31 @@ def _has_access(user_id: int) -> bool:
     if user_id == ADMIN_CHAT_ID:
         return True
     return subscribers.is_active(user_id)
+
+
+async def _enable_order_button(bot, user_id: int) -> None:
+    """Affiche le bouton bleu 'Commander' (WebApp) dans le chat de cet abonné."""
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=user_id,
+            menu_button=MenuButtonWebApp(
+                text="🛒 Commander",
+                web_app=WebAppInfo(url=WEBAPP_URL),
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"set menu WebApp user={user_id}: {e}")
+
+
+async def _disable_order_button(bot, user_id: int) -> None:
+    """Retire le bouton 'Commander' → fallback menu commandes par défaut."""
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=user_id,
+            menu_button=MenuButtonDefault(),
+        )
+    except Exception as e:
+        logger.warning(f"reset menu user={user_id}: {e}")
 
 
 async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | None = None) -> None:
@@ -1322,6 +1350,8 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 )
             except Exception:
                 pass
+        # Active le bouton bleu "Commander" (WebApp) pour cet abonné
+        await _enable_order_button(context.bot, user_id)
         # Trigger onboarding-tag (si pas déjà complété)
         if not subscribers.is_onboarded(user_id):
             await _send_onboarding_question(context.bot, user_id, 0)
@@ -1373,6 +1403,9 @@ async def cmd_expire(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
     except Exception:
         pass
+
+    # Retire le bouton bleu "Commander"
+    await _disable_order_button(context.bot, user_id)
 
     await update.message.reply_text(
         f"✅ Abonné `{user_id}` expiré. Message envoyé.", parse_mode="Markdown"
@@ -1443,6 +1476,7 @@ async def cmd_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     subscribers.block_subscriber(user_id)
+    await _disable_order_button(context.bot, user_id)
     await update.message.reply_text(
         f"🚫 Utilisateur `{user_id}` bloqué.", parse_mode="Markdown"
     )
@@ -1488,6 +1522,9 @@ async def cmd_renouveler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
     except Exception:
         pass
+
+    # Ré-active le bouton bleu (au cas où il avait été retiré via /expire)
+    await _enable_order_button(context.bot, user_id)
 
     await update.message.reply_text(
         f"✅ Abonnement `{user_id}` prolongé de {days} jours. Nouveau terme : {exp_str}",
@@ -1745,8 +1782,18 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
 #  MAIN
 # ──────────────────────────────────────────────────────────
 
+async def _post_init(app) -> None:
+    """Au boot : retire le bouton WebApp global (BotFather) → les non-abonnés
+    voient juste la liste des commandes. Le bouton 'Commander' est ré-activé
+    per-user au moment du /invite."""
+    try:
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except Exception as e:
+        logger.warning(f"post_init clear global menu: {e}")
+
+
 def main() -> None:
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
