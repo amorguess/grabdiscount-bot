@@ -1262,19 +1262,16 @@ function updateMapLink(){
 applyT();
 showSkeletons(6); // immediate skeleton while JSON loads
 
-const _CACHE_KEY = 'gd_restos_v2';
-const _CACHE_TS  = 'gd_restos_ts_v2';
-const _cachedRestos = localStorage.getItem(_CACHE_KEY);
-const _cachedTs = localStorage.getItem(_CACHE_TS);
-if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000){
-  try{ ALL_RESTAURANTS = JSON.parse(_cachedRestos); }catch(e){ ALL_RESTAURANTS=[]; }
-  buildRestos();
-  setupScrollObserver();
-} else {
-  fetch('https://passfooddelivery.online/api/restaurants', {signal: AbortSignal.timeout(5000)})
+const _CACHE_KEY = 'gd_restos_v3';
+const _CACHE_TS  = 'gd_restos_ts_v3';
+
+function _fetchRestos(){
+  fetch('https://passfooddelivery.online/api/restaurants', {signal: AbortSignal.timeout(15000)})
     .then(r=>r.json())
     .then(data=>{
-      ALL_RESTAURANTS = data.restaurants || [];
+      const list = data.restaurants || [];
+      if(!list.length){ throw new Error('empty'); }
+      ALL_RESTAURANTS = list;
       try{
         localStorage.setItem(_CACHE_KEY, JSON.stringify(ALL_RESTAURANTS));
         localStorage.setItem(_CACHE_TS, Date.now());
@@ -1283,9 +1280,33 @@ if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000)
       setupScrollObserver();
     })
     .catch(()=>{
+      localStorage.removeItem(_CACHE_KEY);
+      localStorage.removeItem(_CACHE_TS);
       document.getElementById('homeRestos').innerHTML =
-        '<div style="text-align:center;padding:40px;color:#9CA3AF">⚠️ Restaurants temporairement indisponibles.<br>Réessaie dans quelques instants.</div>';
+        '<div style="text-align:center;padding:40px;color:#9CA3AF">⚠️ Restaurants temporairement indisponibles.<br>' +
+        '<button onclick="location.reload()" style="margin-top:12px;padding:10px 20px;background:#00B14F;color:#fff;border:none;border-radius:8px;font-weight:600">Réessayer</button></div>';
     });
+}
+
+const _cachedRestos = localStorage.getItem(_CACHE_KEY);
+const _cachedTs     = localStorage.getItem(_CACHE_TS);
+let _cacheOk = false;
+if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000){
+  try{
+    const parsed = JSON.parse(_cachedRestos);
+    if(Array.isArray(parsed) && parsed.length > 0){
+      ALL_RESTAURANTS = parsed;
+      _cacheOk = true;
+    }
+  }catch(e){}
+}
+if(_cacheOk){
+  buildRestos();
+  setupScrollObserver();
+} else {
+  localStorage.removeItem(_CACHE_KEY);
+  localStorage.removeItem(_CACHE_TS);
+  _fetchRestos();
 }
 
 function initCuisines(){
