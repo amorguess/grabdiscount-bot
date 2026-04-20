@@ -343,7 +343,8 @@ def api_cookie_upload():
 
 @app.route("/api/restaurants")
 def api_restaurants_public():
-    """Endpoint public pour la Mini App Telegram — pas d'auth, CORS ouvert."""
+    """Legacy endpoint — payload complet (23 MB). Garder pour compat descendante,
+    mais la Mini App utilise /api/restaurants/v2 (paginé) depuis la v3 du cache."""
     try:
         r = Path(BASE / "restaurants.json")
         resp = make_response(r.read_bytes())
@@ -353,6 +354,82 @@ def api_restaurants_public():
         return resp
     except Exception:
         return jsonify({"restaurants": [], "total": 0}), 200
+
+# Cache RAM des restaurants — invalidé si le fichier change sur disque
+_RESTOS_CACHE: dict = {"data": None, "mtime": 0.0}
+
+def _load_restos_cache() -> list:
+    """Charge restaurants.json en RAM, rafraîchi si le fichier a été modifié."""
+    try:
+        p = BASE / "restaurants.json"
+        mtime = p.stat().st_mtime
+        if _RESTOS_CACHE["data"] is None or _RESTOS_CACHE["mtime"] != mtime:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            _RESTOS_CACHE["data"] = d.get("restaurants", [])
+            _RESTOS_CACHE["mtime"] = mtime
+        return _RESTOS_CACHE["data"]
+    except Exception:
+        return []
+
+@app.route("/api/restaurants/v2")
+def api_restaurants_v2():
+    """Endpoint paginé + filtré côté serveur pour la Mini App.
+    Params : page (1-N), size (1-50, défaut 30), q, cuisine, zone, halal."""
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        size = min(50, max(1, int(request.args.get("size", 30))))
+    except (ValueError, TypeError):
+        size = 30
+    q       = (request.args.get("q") or "").strip().lower()
+    cuisine = (request.args.get("cuisine") or "").strip().lower()
+    zone    = (request.args.get("zone") or "").strip().lower()
+    halal   = (request.args.get("halal") or "").lower() in ("1", "true", "yes")
+
+    restos = _load_restos_cache()
+
+    # Filtrage serveur
+    if cuisine:
+        restos = [r for r in restos
+                  if any(cuisine in (c or "").lower() for c in (r.get("cuisine") or []))]
+    if zone:
+        restos = [r for r in restos if zone in (r.get("zone") or "").lower()]
+    if halal:
+        restos = [r for r in restos if r.get("halal")]
+    if q:
+        restos = [r for r in restos
+                  if q in (r.get("name") or "").lower()
+                  or any(q in (c or "").lower() for c in (r.get("cuisine") or []))]
+
+    total = len(restos)
+    start = (page - 1) * size
+    end   = start + size
+    page_items = restos[start:end]
+
+    # Payload léger : seulement ce que la list view affiche
+    light = [{
+        "id":      r.get("id"),
+        "name":    r.get("name"),
+        "cuisine": (r.get("cuisine") or [])[:3],
+        "zone":    r.get("zone"),
+        "halal":   bool(r.get("halal")),
+        "photo":   r.get("photo"),
+    } for r in page_items]
+
+    payload = json.dumps({
+        "restaurants": light,
+        "page":        page,
+        "size":        size,
+        "total":       total,
+        "has_more":    end < total,
+    }, ensure_ascii=False)
+    resp = make_response(payload)
+    resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
 
 @app.route("/api/restaurants/count")
 @auth

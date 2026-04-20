@@ -911,8 +911,13 @@ function haptic(style){
 function hapticSelect(){ try{ tg?.HapticFeedback?.selectionChanged() }catch(e){} }
 function hapticNotif(t){ try{ tg?.HapticFeedback?.notificationOccurred(t||'success') }catch(e){} }
 
-// ── RESTOS (real data from restaurants.json) ──
-let ALL_RESTAURANTS = [];
+// ── RESTOS (paginé serveur : /api/restaurants/v2) ──
+const API_BASE = 'https://passfooddelivery.online';
+let ALL_RESTAURANTS = [];   // items déjà chargés (accumulés page par page)
+let PAGE = 0;               // dernière page chargée
+let HAS_MORE = true;
+let IS_LOADING = false;
+let SERVER_TOTAL = 0;
 const CUISINE_ICONS = {
   'Thai':['🍜'],'Japanese':['🍣'],'Korean':['🫕'],'Chinese':['🥟'],
   'Burger':['🍔'],'Western':['🍔'],'Pizza':['🍕'],'Italian':['🍝'],
@@ -936,20 +941,51 @@ function cuisineIcon(cuisines){
 }
 
 let CURRENT_FILTER = null;
-let DISPLAYED_COUNT = 0;
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 30;
 const BG_COLORS = ['#E8F8EF','#FEF3C7','#FEE2E2','#E0F2FE','#FFF0E0','#F3E8FF','#FFF9C4','#FCE4EC'];
 
-function getFilteredRestos(){
-  let restos = ALL_RESTAURANTS.length ? ALL_RESTAURANTS : [];
-  if(CURRENT_FILTER){
-    const fl = CURRENT_FILTER.toLowerCase();
-    const filtered = restos.filter(r =>
-      r.cuisine.some(c => c.toLowerCase().includes(fl) || fl.includes(c.toLowerCase()))
-    );
-    restos = filtered.length ? filtered : restos;
+async function fetchRestosPage(){
+  // Charge la page suivante depuis le serveur, en appliquant CURRENT_FILTER.
+  if(IS_LOADING || !HAS_MORE) return;
+  IS_LOADING = true;
+  const targetPage = PAGE + 1;
+  try{
+    const params = new URLSearchParams({page: targetPage, size: PAGE_SIZE});
+    if(CURRENT_FILTER) params.set('cuisine', CURRENT_FILTER);
+    const r = await fetch(`${API_BASE}/api/restaurants/v2?${params}`, {signal: AbortSignal.timeout(8000)});
+    if(!r.ok) throw new Error('http '+r.status);
+    const data = await r.json();
+    const items = data.restaurants || [];
+    ALL_RESTAURANTS = ALL_RESTAURANTS.concat(items);
+    SERVER_TOTAL = data.total || 0;
+    HAS_MORE = !!data.has_more;
+    PAGE = data.page || targetPage;
+    appendRestoCards(items);
+  }catch(e){
+    if(PAGE === 0){
+      document.getElementById('homeRestos').innerHTML =
+        '<div style="text-align:center;padding:40px;color:#9CA3AF">⚠️ Restaurants temporairement indisponibles.<br>' +
+        '<button onclick="resetAndLoad()" style="margin-top:12px;padding:10px 20px;background:#00B14F;color:#fff;border:none;border-radius:8px;font-weight:600">Réessayer</button></div>';
+    }
+  }finally{
+    IS_LOADING = false;
   }
-  return restos;
+}
+
+function resetAndLoad(){
+  PAGE = 0;
+  HAS_MORE = true;
+  IS_LOADING = false;
+  ALL_RESTAURANTS = [];
+  const list = document.getElementById('homeRestos');
+  list.innerHTML = '';
+  showSkeletons(6);
+  fetchRestosPage().then(() => {
+    if(ALL_RESTAURANTS.length === 0){
+      list.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#9CA3AF;font-size:14px">Aucun restaurant trouvé 😕</div>';
+    }
+    setupScrollObserver();
+  });
 }
 
 function hashCode(str){
@@ -1024,9 +1060,8 @@ function clearFilter(){
   hapticSelect();
   CURRENT_FILTER = null;
   hideFilterChip();
-  // Deselect all category items
   document.querySelectorAll('#homeCats .cat-item').forEach(x=>x.classList.remove('selected'));
-  buildRestos(null);
+  resetAndLoad();
 }
 
 // ── INFINITE SCROLL (IntersectionObserver) ──
@@ -1036,39 +1071,23 @@ function setupScrollObserver(){
   const sentinel = document.getElementById('scrollSentinel');
   if(!sentinel) return;
   _scrollObserver = new IntersectionObserver(entries=>{
-    if(entries[0].isIntersecting){
-      const restos = getFilteredRestos();
-      if(DISPLAYED_COUNT < restos.length) loadMoreRestos();
+    if(entries[0].isIntersecting && HAS_MORE && !IS_LOADING){
+      fetchRestosPage();
     }
-  },{rootMargin:'120px'});
+  },{rootMargin:'200px'});
   _scrollObserver.observe(sentinel);
 }
 
-function buildRestos(filter){
-  CURRENT_FILTER = filter || null;
-  DISPLAYED_COUNT = 0;
+function appendRestoCards(items){
+  if(!items || !items.length) return;
   const list = document.getElementById('homeRestos');
-  list.innerHTML = '';
-  if(ALL_RESTAURANTS.length === 0){
-    showSkeletons(6);
-    return;
-  }
-  loadMoreRestos();
-  setupScrollObserver();
-}
-
-function loadMoreRestos(){
-  const restos = getFilteredRestos();
-  const list = document.getElementById('homeRestos');
-  if(DISPLAYED_COUNT === 0 && !restos.length){
-    list.innerHTML = '<div style="text-align:center;padding:40px 16px;color:#9CA3AF;font-size:14px">Aucun restaurant trouvé 😕</div>';
-    return;
-  }
-  const chunk = restos.slice(DISPLAYED_COUNT, DISPLAYED_COUNT + PAGE_SIZE);
+  // Retirer les skeletons si encore présents au premier append
+  const skeletons = list.querySelectorAll('.skel-card');
+  skeletons.forEach(s => s.remove());
+  const offset = ALL_RESTAURANTS.length - items.length;
   const frag = document.createDocumentFragment();
-  chunk.forEach((r,i) => frag.appendChild(renderRestoCard(r, DISPLAYED_COUNT + i)));
+  items.forEach((r, i) => frag.appendChild(renderRestoCard(r, offset + i)));
   list.appendChild(frag);
-  DISPLAYED_COUNT += chunk.length;
 }
 
 // ── STATE ──
@@ -1161,46 +1180,59 @@ function closeSearch(){
 function closeSearchOnBg(e){
   if(e.target === document.getElementById('searchOverlay')) closeSearch();
 }
+let _searchTimer = null;
+let _searchAbort = null;
 function filterSearch(){
-  renderSearchResults(document.getElementById('searchInput').value);
+  clearTimeout(_searchTimer);
+  const q = document.getElementById('searchInput').value;
+  _searchTimer = setTimeout(() => renderSearchResults(q), 250);
 }
-function renderSearchResults(q){
+async function renderSearchResults(q){
   const container = document.getElementById('searchResults');
-  const query = q.trim().toLowerCase();
-  let results = ALL_RESTAURANTS;
-  if(query){
-    results = ALL_RESTAURANTS.filter(r =>
-      r.name.toLowerCase().includes(query) ||
-      r.cuisine.some(c => c.toLowerCase().includes(query))
-    );
-  }
-  if(!results.length){
-    container.innerHTML = `<div class="search-empty">Aucun résultat pour « ${q} »</div>`;
+  const query = (q || '').trim();
+  if(!query){
+    container.innerHTML = '<div class="search-empty">Commence à taper pour rechercher…</div>';
     return;
   }
-  const top = results.slice(0, 40);
-  const frag = document.createDocumentFragment();
-  top.forEach(r => {
-    const el = document.createElement('div');
-    el.className = 'search-item';
-    const bg = BG_COLORS[Math.floor(Math.random()*BG_COLORS.length)];
-    const icon = cuisineIcon(r.cuisine);
-    el.innerHTML = `
-      <div class="si-icon" style="background:${bg}">${icon}</div>
-      <div class="si-info">
-        <div class="si-name">${r.name}</div>
-        <div class="si-tags">${r.cuisine.slice(0,3).join(' · ')}</div>
-      </div>
-      <span style="color:var(--muted);font-size:18px">›</span>`;
-    el.onclick = () => {
-      haptic('light');
-      closeSearch();
-      goTo(1);
-    };
-    frag.appendChild(el);
-  });
-  container.innerHTML = '';
-  container.appendChild(frag);
+  // Annule la requête précédente
+  if(_searchAbort) _searchAbort.abort();
+  _searchAbort = new AbortController();
+  try{
+    const params = new URLSearchParams({q: query, size: 40, page: 1});
+    const r = await fetch(`${API_BASE}/api/restaurants/v2?${params}`, {signal: _searchAbort.signal});
+    if(!r.ok) throw new Error('http '+r.status);
+    const data = await r.json();
+    const results = data.restaurants || [];
+    if(!results.length){
+      container.innerHTML = `<div class="search-empty">Aucun résultat pour « ${q} »</div>`;
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    results.forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'search-item';
+      const bg = BG_COLORS[Math.floor(Math.random()*BG_COLORS.length)];
+      const icon = cuisineIcon(r.cuisine);
+      el.innerHTML = `
+        <div class="si-icon" style="background:${bg}">${icon}</div>
+        <div class="si-info">
+          <div class="si-name">${r.name}</div>
+          <div class="si-tags">${(r.cuisine||[]).slice(0,3).join(' · ')}</div>
+        </div>
+        <span style="color:var(--muted);font-size:18px">›</span>`;
+      el.onclick = () => {
+        haptic('light');
+        closeSearch();
+        goTo(1);
+      };
+      frag.appendChild(el);
+    });
+    container.innerHTML = '';
+    container.appendChild(frag);
+  }catch(e){
+    if(e.name === 'AbortError') return;
+    container.innerHTML = '<div class="search-empty">⚠️ Erreur réseau — réessaie</div>';
+  }
 }
 
 // ── GEOLOCATION + MAPS LINK ──
@@ -1260,54 +1292,15 @@ function updateMapLink(){
 
 // ── INIT ──
 applyT();
-showSkeletons(6); // immediate skeleton while JSON loads
 
-const _CACHE_KEY = 'gd_restos_v3';
-const _CACHE_TS  = 'gd_restos_ts_v3';
+// Purger les anciens caches localStorage (v1/v2/v3 stockaient 8-23MB, pas tenables sur mobile)
+try{
+  ['gd_restos_v1','gd_restos_ts_v1','gd_restos_v2','gd_restos_ts_v2','gd_restos_v3','gd_restos_ts_v3']
+    .forEach(k => localStorage.removeItem(k));
+}catch(e){}
 
-function _fetchRestos(){
-  fetch('https://passfooddelivery.online/api/restaurants', {signal: AbortSignal.timeout(15000)})
-    .then(r=>r.json())
-    .then(data=>{
-      const list = data.restaurants || [];
-      if(!list.length){ throw new Error('empty'); }
-      ALL_RESTAURANTS = list;
-      try{
-        localStorage.setItem(_CACHE_KEY, JSON.stringify(ALL_RESTAURANTS));
-        localStorage.setItem(_CACHE_TS, Date.now());
-      }catch(e){ /* quota dépassé — cache ignoré, données en mémoire */ }
-      buildRestos();
-      setupScrollObserver();
-    })
-    .catch(()=>{
-      localStorage.removeItem(_CACHE_KEY);
-      localStorage.removeItem(_CACHE_TS);
-      document.getElementById('homeRestos').innerHTML =
-        '<div style="text-align:center;padding:40px;color:#9CA3AF">⚠️ Restaurants temporairement indisponibles.<br>' +
-        '<button onclick="location.reload()" style="margin-top:12px;padding:10px 20px;background:#00B14F;color:#fff;border:none;border-radius:8px;font-weight:600">Réessayer</button></div>';
-    });
-}
-
-const _cachedRestos = localStorage.getItem(_CACHE_KEY);
-const _cachedTs     = localStorage.getItem(_CACHE_TS);
-let _cacheOk = false;
-if(_cachedRestos && _cachedTs && (Date.now() - Number(_cachedTs)) < 6*3600*1000){
-  try{
-    const parsed = JSON.parse(_cachedRestos);
-    if(Array.isArray(parsed) && parsed.length > 0){
-      ALL_RESTAURANTS = parsed;
-      _cacheOk = true;
-    }
-  }catch(e){}
-}
-if(_cacheOk){
-  buildRestos();
-  setupScrollObserver();
-} else {
-  localStorage.removeItem(_CACHE_KEY);
-  localStorage.removeItem(_CACHE_TS);
-  _fetchRestos();
-}
+// Premier fetch serveur (page 1 = ~15KB gzip, ~200ms)
+resetAndLoad();
 
 function initCuisines(){
   buildCats('homeCats', (c, el, id)=>{
@@ -1315,10 +1308,7 @@ function initCuisines(){
     const filter = c.en || c.fr;
     CURRENT_FILTER = filter;
     showFilterChip(filter);
-    DISPLAYED_COUNT = 0;
-    document.getElementById('homeRestos').innerHTML = '';
-    loadMoreRestos();
-    setupScrollObserver();
+    resetAndLoad();
     setTimeout(()=>{
       document.getElementById('homeRestos').scrollIntoView({behavior:'smooth', block:'nearest'});
     }, 60);

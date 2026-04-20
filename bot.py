@@ -58,8 +58,30 @@ WISE_LINK_VIP = "https://wise.com/pay/r/_XGgs7i3c4CThlg"   # VIP 20€/mois
 # cliquent déclenchent une alerte admin (warm lead).
 COMMUNITY_CHANNEL_LINK = "https://t.me/+MLazLZnaShM3OWE1"
 
-# Parrains détectés via ?start=ref_<id> — clé = filleul_id, val = parrain_id
-_pending_referrals: dict[int, int] = {}
+# Parrains détectés via ?start=ref_<id> — clé = filleul_id, val = parrain_id.
+# Persisté sur disque : sinon un crash du bot entre le clic "?start=ref_X" et le
+# /invite admin perdrait le crédit parrainage (symétrique -5€/-5€).
+_REFERRALS_FILE = Path(os.environ.get("DATA_DIR", Path(__file__).parent)) / "pending_referrals.json"
+
+def _load_pending_referrals() -> dict[int, int]:
+    try:
+        with open(_REFERRALS_FILE, "r", encoding="utf-8") as f:
+            return {int(k): int(v) for k, v in json.load(f).items()}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def _save_pending_referrals() -> None:
+    tmp = str(_REFERRALS_FILE) + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in _pending_referrals.items()}, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, _REFERRALS_FILE)
+    except Exception as e:
+        logger.warning(f"_save_pending_referrals: {e}")
+
+_pending_referrals: dict[int, int] = _load_pending_referrals()
 
 # ──────────────────────────────────────────────────────────
 #  ÉTATS
@@ -522,6 +544,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 parrain_id = int(arg0[4:])
                 if parrain_id != user.id:
                     _pending_referrals[user.id] = parrain_id
+                    _save_pending_referrals()
             except ValueError:
                 pass
 
@@ -1269,6 +1292,8 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     # Parrain détecté via /start=ref_X plus tôt
     parrain_id = _pending_referrals.pop(user_id, None)
+    if parrain_id is not None:
+        _save_pending_referrals()
 
     # Lien canal communauté — partagé entre tous les abonnés.
     # handle_join_request approuve uniquement si subscribers.is_active().
