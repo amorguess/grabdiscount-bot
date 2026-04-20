@@ -38,14 +38,14 @@ TS_FMT    = "%Y-%m-%dT%H:%M:%S"
 
 # ── Config plans ──────────────────────────────────────────
 PLAN_CAPS = {
-    "starter": 20,   # 20 commandes/mois
-    "pro":     -1,   # illimité
+    "starter": 20,   # (legacy) — non proposé aux nouveaux
+    "pro":     -1,   # VIP illimité (plan actuel)
 }
 PLAN_PRICES = {
-    "starter": 20,   # EUR
-    "pro":     30,   # EUR
+    "starter": 20,   # (legacy)
+    "pro":     20,   # VIP : 20€/mois illimité (2026-04-20)
 }
-DEFAULT_PLAN = "starter"
+DEFAULT_PLAN = "pro"
 
 _io_lock = threading.Lock()
 

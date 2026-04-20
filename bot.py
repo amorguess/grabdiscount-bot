@@ -48,7 +48,7 @@ CHANNEL_ID    = int(os.environ.get("CHANNEL_ID", -1003910907077))
 # ── Plans & liens paiement ────────────────────────────────
 WISE_LINK_STARTER = "https://wise.com/pay/r/_XGgs7i3c4CThlg"   # 20€
 WISE_LINK_PRO     = "https://wise.com/pay/r/ejA8VTB89QRBmwc"   # 30€
-PLAN_LABEL = {"starter": "Starter — 20€", "pro": "Pro — 30€"}
+PLAN_LABEL = {"starter": "Starter — 20€ (legacy)", "pro": "VIP — 20€"}
 
 # ── Canal communauté (Join Request filtré par handle_join_request) ──
 # Seuls les abonnés actifs sont auto-approuvés — les prospects qui
@@ -110,17 +110,20 @@ async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | No
     ]
     await update.message.reply_text(
         "🛵 *GrabDiscount*\n\n"
-        "Ce bot est *réservé aux abonnés* du canal privé.\n\n"
+        "Ce bot est *réservé aux abonnés VIP*.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🇹🇭 -50% sur Grab Food dans toute la Thaïlande\n"
-        "💳 Abonnement à partir de *20€/mois*\n"
+        "🇹🇭 *-50%* sur Grab Food dans toute la Thaïlande\n"
+        "💎 *20€/mois* · Accès illimité\n"
         "🕙 Service 🇫🇷 de 10h à 00h\n\n"
+        "📐 *Règles de commande :*\n"
+        "• Min : panier 500 ฿ → tu payes 250 ฿\n"
+        "• Max : panier 2 000 ฿ → tu payes 1 000 ฿\n\n"
         f"{ref_line}"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "*Pour t'abonner :*\n"
-        "1️⃣ Rejoins le canal (demande d'adhésion)\n"
-        "2️⃣ Paie via Wise (lien communiqué par l'admin)\n"
-        "3️⃣ L'admin t'approuve manuellement · accès bot activé\n\n"
+        "1️⃣ Rejoins le canal (toutes les infos dedans)\n"
+        "2️⃣ Contacte l'admin · paiement Wise (20€)\n"
+        "3️⃣ Accès bot activé · tu peux commander\n\n"
         "👇",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -140,12 +143,9 @@ async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | No
                     f"👤 *{user.full_name}*  {username}\n"
                     f"🆔 ID : `{user.id}`"
                     f"{parrain_line}\n\n"
-                    "▸ Liens Wise :\n"
-                    f"  Starter : {WISE_LINK_STARTER}\n"
-                    f"  Pro     : {WISE_LINK_PRO}\n\n"
+                    f"▸ Lien Wise VIP (20€) :\n  {WISE_LINK_STARTER}\n\n"
                     f"▸ Après paiement :\n"
-                    f"  `/invite {user.id} {user.first_name or 'Prénom'} starter`\n"
-                    f"  `/invite {user.id} {user.first_name or 'Prénom'} pro`"
+                    f"  `/invite {user.id} {user.first_name or 'Prénom'}`"
                 ),
                 parse_mode="Markdown",
                 disable_web_page_preview=True,
@@ -504,14 +504,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if reason == "cap_reached":
                 used, cap = subscribers.get_monthly_usage(user.id)
                 kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("♾️ Passer en Pro — 30€", url="https://t.me/Grabfoodeat"),
+                    InlineKeyboardButton("💬 Contacter l'admin", url="https://t.me/Grabfoodeat"),
                 ]])
                 await update.message.reply_text(
                     f"🚫 *Limite atteinte ce mois*\n\n"
-                    f"Tu as fait *{used}/{cap}* commandes sur ton plan Starter.\n\n"
+                    f"Tu as fait *{used}/{cap}* commandes sur ton abonnement legacy.\n\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"👉 Passe en *Pro (30€/mois)* pour commander sans limite — "
-                    f"ou attends le 1er du mois prochain.",
+                    f"👉 Contacte l'admin pour passer en *VIP (20€/mois)* illimité.",
                     parse_mode="Markdown",
                     reply_markup=kb,
                 )
@@ -541,10 +540,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if user.id != ADMIN_CHAT_ID:
         used, cap = subscribers.get_monthly_usage(user.id)
         if cap == -1:
-            usage_line = f"♾️ Plan Pro — {used} commande(s) ce mois\n\n"
+            usage_line = f"💎 VIP — {used} commande(s) ce mois\n\n"
         else:
             restantes = max(0, cap - used)
-            usage_line = f"🥢 Plan Starter — *{restantes}/{cap}* commande(s) restantes ce mois\n\n"
+            usage_line = f"🥢 Legacy — *{restantes}/{cap}* commande(s) restantes\n\n"
 
     await update.message.reply_text(
         "🛵 *GrabDiscount* — Livraison -50% Thaïlande\n\n"
@@ -1164,14 +1163,14 @@ async def cmd_promo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     promo_text = (
         "🛵 *GrabDiscount — Offre du moment*\n\n"
-        "🎁 Économise *jusqu'à 50%* sur tes repas Grab dans toute la Thaïlande.\n\n"
+        "🎁 *-50%* sur tes repas Grab dans toute la Thaïlande.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "🥢 *Starter* — 20€/mois · 20 commandes\n"
-        "♾️ *Pro* — 30€/mois · illimité\n"
+        "💎 *VIP* — 20€/mois · Accès illimité\n"
+        "📐 Min 500 ฿ (tu payes 250) · Max 2 000 ฿ (tu payes 1 000)\n"
         "🎁 *Parrainage* — -5€ pour toi ET ton pote\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📲 Pour commander : @GrabDiscountBot\n"
-        "🇫🇷 Service 10h-00h · Réponse < 5 min"
+        "💬 Pour s'abonner : DM @Grabfoodeat\n"
+        "🇫🇷 Service 10h-00h · Réponse < 1h"
     )
     try:
         await context.bot.send_message(chat_id=CHANNEL_ID, text=promo_text, parse_mode="Markdown")
@@ -1194,11 +1193,11 @@ async def cmd_annonce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "3️⃣ On passe la commande pour toi\n"
         "4️⃣ Tu reçois ton repas 🍜\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "🥢 *Starter* 20€ · 20 cmd/mois\n"
-        "♾️ *Pro* 30€ · illimité\n"
+        "💎 *VIP* — 20€/mois · Accès illimité\n"
+        "📐 Min 500 ฿ (tu payes 250) · Max 2 000 ฿ (tu payes 1 000)\n"
         "🎁 Parrainage : -5€ pour toi ET ton pote\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📲 Pour commander : @GrabDiscountBot\n"
+        "💬 Pour s'abonner : DM @Grabfoodeat\n"
         "🇫🇷 Service français · 🇹🇭 Toute la Thaïlande · 🕙 10h-00h"
     )
     try:
@@ -1215,14 +1214,14 @@ async def cmd_annonce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Crée un lien d'invitation canal unique et active l'abonnement.
     Usage : /invite USER_ID [Prénom] [plan]
-      plan = starter (défaut) ou pro
+      plan = pro (défaut, VIP 20€ illimité) ou starter (legacy)
     """
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
     if not context.args:
         await update.message.reply_text(
-            "⚠️ *Usage :*\n`/invite USER_ID [Prénom] [starter|pro]`\n"
-            "_Défaut : starter_",
+            "⚠️ *Usage :*\n`/invite USER_ID [Prénom]`\n"
+            "_Défaut : VIP 20€/mois illimité_",
             parse_mode="Markdown",
         )
         return
@@ -1280,7 +1279,7 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             chat_id=user_id,
             text=(
                 f"🎉 *Bienvenue sur GrabDiscount, {prenom} !*\n\n"
-                f"Plan *{plan.capitalize()}* activé pour *30 jours*.\n"
+                f"💎 *Abonnement VIP activé* pour *30 jours*.\n"
                 f"{cap_line}"
                 f"{ref_note}\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━\n"

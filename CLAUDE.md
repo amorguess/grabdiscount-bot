@@ -91,13 +91,29 @@ Email iCloud + Identité (nom, prénom, adresse Bangkok) + Numéro tél (manuel)
 
 ## État actuel (2026-04-20)
 - ✅ Bot VPS actif, token rotation faite
-- ✅ iCloud auto-gen Mac opérationnel (LaunchAgent + post_process)
+- ✅ iCloud auto-gen Mac opérationnel (LaunchAgent + post_process + sync VPS)
 - ✅ Join Request auto-approval activé (bot admin du canal)
 - ✅ Plans Starter/Pro + parrainage (-5€/-5€) + pause abonnement — schéma + bot livrés
+- ✅ **Premier compte Grab créé end-to-end** (2026-04-20, `bratty-meshes.0a@icloud.com`) — flux manuel validé
 - ⏳ Dashboard : pas encore de vue subscribers (Phase 2) — admin utilise `/abonnes` `/invite` etc. en attendant
 - ⏳ **Pas encore lancé** — 0 client, 0 abonné
-- 📋 ~81 comptes iCloud prêts (available), numéros tél à remplir
+- 📋 ~113 comptes iCloud prêts (available), signup Grab à la volée
 - 🧪 Tests à faire : /start depuis compte secondaire, paiement Wise → /invite, parrainage link, cap_reached upsell
+
+## Décision stratégique (2026-04-20) : signup Grab manuel, pas d'auto
+**Rationale** : 0 client aujourd'hui, marge Starter 20€ vs coût auto ~500€ dev + proxies. Automatiser = optim prématurée.
+**Flux actuel** : quand un client commande → je crée le compte à la volée (~3 min, checklist `tasks/checklist_signup_grab.md`) → je passe la commande depuis l'iPhone.
+**Seuil pour automatiser** : 50+ clients actifs OU >20 commandes/jour (charge manuelle >1h/jour).
+**Plan usine archivé** : `tasks/plan_usine_grab.md` (7 stages, 6 jours dev) — prêt à réactiver quand seuil atteint.
+**Session tokens Grab** : stratégie retenue pour future auto = extraction tokens via `adb shell run-as com.grabtaxi.passenger` + injection sur AVD disposable (évite passkey + re-SMS).
+
+## Apprentissages clés (2026-04-20, manuel)
+- SMSPool TH **Quick Order = one-shot** (~$0.11) → numéro recyclé après 1 SMS. Pour re-login = Long-term order ($3-5/mois) OU snapshot emulator OU extraction tokens.
+- Grab OTP arrive sous 20s via SMSPool (pas de blacklist VoIP quand le flow est manuel/humain)
+- Vérif email Grab obligatoire sous 48h sinon suspension
+- HME forwarde vers `ltreves2@gmail.com` (Apple ID de génération). Check **spam Gmail** si pas reçu.
+- Passkey obligatoire au signup (stockée iCloud Keychain sur iPhone — reste après désinstall app). Alternative login : phone+OTP (SMS ou WhatsApp) persiste.
+- Grab propose 4 méthodes login : passkey / iCloud / Gmail / phone number
 
 ## Déployer une modification
 ```bash
