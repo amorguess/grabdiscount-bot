@@ -48,18 +48,30 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 3. Admin reçoit screenshot + adresse + compte Grab assigné automatiquement
 4. Admin : bouton "En cours" → "Livré" → compte marqué `used`
 
-## Flux abonnement
-1. Prospect `/start` bot → pitch 2 plans avec 3 boutons : [Starter 20€] [Pro 30€] [Parrainage]
-2. Clic bouton → bot renvoie lien Wise correspondant + instructions
-3. Client paie → envoie screenshot → admin confirme via `/invite USER_ID Prénom [starter|pro]`
-4. Le bot crée un lien Join Request, ajoute à `subscribers.json` avec le plan, notifie client + parrain si applicable
-5. Client clique lien → Telegram envoie Join Request → bot vérifie `subscribers.is_active()` :
-   - ✅ abonné → `approve_chat_join_request` + message bienvenue (DM)
-   - ❌ non abonné → `decline_chat_join_request` + alerte admin
-6. Commande → `start()` vérifie `can_order()` : cap_reached/paused/expired → message dédié + upsell Pro si Starter plein
-7. Parrainage : filleul ouvre `t.me/<bot>?start=ref_<parrain_id>` → parrain_id stocké dans `_pending_referrals` (RAM) → au prochain `/invite` de ce filleul, parrain_id est consommé, filleul a `had_referral_discount=True` (admin facture -5€), parrain reçoit `referral_credit_eur += 5`
-8. Pause : `/pauseabo USER_ID [jours=30]` → bloque commandes + prolonge `expires_at` d'autant
-9. Expiration → `/expire USER_ID` → ne peut plus commander, reste dans le canal (pas de kick)
+## Flux abonnement (mode funnel par le canal)
+**Principe** : tout le marketing/pitching se fait sur le canal communauté. Le bot ne vend pas — il ne sert qu'aux abonnés actifs pour commander.
+
+1. Prospect découvre le canal (bouche-à-oreille, post externe, parrainage)
+2. Clique `t.me/+MLazLZnaShM3OWE1` → Telegram propose "Demander à rejoindre"
+3. `handle_join_request` : décline si non abonné + alerte admin (warm lead)
+4. Admin DM le prospect → envoie lien Wise (Starter 20€ ou Pro 30€)
+5. Prospect paie → envoie screenshot à l'admin (via @Grabfoodeat)
+6. Admin : `/invite USER_ID Prénom [starter|pro]` → ajoute à `subscribers.json` + DM welcome avec bouton "Rejoindre le canal"
+7. Prospect re-clique le lien canal → Telegram relance un Join Request → `handle_join_request` auto-approuve (is_active=True)
+8. Abonné peut désormais utiliser le bot : `/start` ouvre le flux commande (screenshot → adresse → admin)
+9. Cap Starter atteint (20 cmd/mois) → bot bloque + upsell Pro
+10. Pause : `/pauseabo USER_ID [jours=30]` prolonge expires_at d'autant
+11. Expiration → `/expire USER_ID` → ne peut plus commander, reste dans le canal (pas de kick)
+
+### Bot pour prospect = dead-end redirigé
+Si un non-abonné tape `/start` (ou autre) au bot, `_refuser_acces` renvoie un message minimal avec 2 boutons : [📢 Rejoindre le canal] [💬 Contacter l'admin]. Aucun lien Wise direct exposé au prospect — l'admin contrôle le funnel.
+
+### Parrainage
+- Abonné tape `/parrainage` → récupère `t.me/<bot>?start=ref_<parrain_id>`
+- Filleul ouvre le lien → `start()` parse `ref_X` → stocke dans `_pending_referrals` (RAM)
+- Filleul tape /start → pitch affiche "🎁 Tu as été parrainé → -5€"
+- Admin fait `/invite <filleul>` → `add_subscriber(parrain_id=...)` → filleul a `had_referral_discount=True`, parrain reçoit `referral_credit_eur += 5`
+- Admin notifie parrain automatiquement (DM "Ton filleul X vient de s'abonner")
 
 ## Commandes bot
 **Client** : `/start` `/parrainage` `/aide` `/annuler` `/tchat`
