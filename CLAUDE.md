@@ -2,15 +2,15 @@
 
 ## C'est quoi ce projet ?
 Service de réductions Grab Food en Thaïlande pour expatriés/voyageurs francophones.
-Deux formules : **Starter 20€/mois** (20 commandes) et **Pro 30€/mois** (illimité).
+Formule unique : **VIP 20€/mois** (commandes illimitées).
 Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte = 1 commande, jamais réutilisé).
 
 ## Modèle business
-- Plans : Starter 20€ (cap 20 commandes/mois) · Pro 30€ (illimité)
+- Plan unique : **VIP 20€/mois** (illimité). `starter` (cap 20/mois) reste supporté en legacy dans `subscribers.py` pour les anciens comptes mais n'est plus proposé.
 - Parrainage : -5€ pour le filleul sur son 1er mois ET -5€ pour le parrain sur son prochain renouvellement (symétrique)
 - Pause abonnement : `/pauseabo` admin — ~1 mois/an offert (voyages), expiration prolongée d'autant
-- Client paie via Wise (Starter: `wise.com/pay/r/_XGgs7i3c4CThlg` · Pro: `wise.com/pay/r/ejA8VTB89QRBmwc`)
-- Paiement confirmé → admin `/invite USER_ID Prénom [starter|pro]` → lien canal privé + accès commandes
+- Client paie via Wise : `wise.com/pay/r/_XGgs7i3c4CThlg` (20€)
+- Paiement confirmé → admin `/invite USER_ID Prénom` → lien canal privé + accès commandes
 - Admin reçoit screenshot Grab + compte Grab auto-assigné → passe la commande manuellement
 - Canal = communauté permanente (on ne kick jamais, même si expiré)
 - Accès commandes contrôlé par `subscribers.json` + `can_order()`, pas par membership canal

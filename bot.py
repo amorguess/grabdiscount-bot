@@ -48,10 +48,10 @@ BOT_TOKEN     = os.environ["BOT_TOKEN"]
 ADMIN_CHAT_ID = int(os.environ["ADMIN_CHAT_ID"])
 CHANNEL_ID    = int(os.environ.get("CHANNEL_ID", -1003910907077))
 
-# ── Plans & liens paiement ────────────────────────────────
-WISE_LINK_STARTER = "https://wise.com/pay/r/_XGgs7i3c4CThlg"   # 20€
-WISE_LINK_PRO     = "https://wise.com/pay/r/ejA8VTB89QRBmwc"   # 30€
-PLAN_LABEL = {"starter": "Starter — 20€ (legacy)", "pro": "VIP — 20€"}
+# ── Plan & lien paiement ──────────────────────────────────
+# Plan unique VIP 20€/mois illimité. `starter` (cap 20/mois) reste en legacy
+# dans subscribers.py pour les anciens comptes, mais n'est plus proposé.
+WISE_LINK_VIP = "https://wise.com/pay/r/_XGgs7i3c4CThlg"   # VIP 20€/mois
 
 # ── Canal communauté (Join Request filtré par handle_join_request) ──
 # Seuls les abonnés actifs sont auto-approuvés — les prospects qui
@@ -171,7 +171,7 @@ async def _refuser_acces(update: Update, context: ContextTypes.DEFAULT_TYPE | No
                     f"👤 *{user.full_name}*  {username}\n"
                     f"🆔 ID : `{user.id}`"
                     f"{parrain_line}\n\n"
-                    f"▸ Lien Wise VIP (20€) :\n  {WISE_LINK_STARTER}\n\n"
+                    f"▸ Lien Wise VIP (20€) :\n  {WISE_LINK_VIP}\n\n"
                     f"▸ Après paiement :\n"
                     f"  `/invite {user.id} {user.first_name or 'Prénom'}`"
                 ),

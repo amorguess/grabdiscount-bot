@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """GrabDiscount — QG Admin v3"""
 from __future__ import annotations
-import os, json, re, subprocess, threading, datetime, functools, requests, fcntl
+import os, json, re, subprocess, threading, datetime, functools, requests, fcntl, time
+from collections import defaultdict
 from pathlib import Path
 
 try:
@@ -33,8 +34,8 @@ if not _secret:
 app.secret_key = _secret
 
 # Cookies sécurisés sur HTTPS
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"]   = False  # False car Flask voit HTTP (Cloudflare termine SSL)
+app.config["SESSION_COOKIE_SAMESITE"] = "Strict"  # mitige CSRF sur POSTs admin
+app.config["SESSION_COOKIE_SECURE"]   = False    # Cloudflare termine SSL, Flask voit HTTP
 
 _CODE_DIR   = Path(__file__).parent                             # dossier du code
 BASE        = Path(os.environ.get("DATA_DIR", str(_CODE_DIR)))  # données → DATA_DIR si dispo
@@ -55,8 +56,9 @@ DEFAULT_CONFIG = {
 
 BOT_TOKEN     = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID      = int(os.environ.get("ADMIN_CHAT_ID", 0))
-DASHBOARD_PWD = os.environ.get("DASHBOARD_PASSWORD", "grabadmin2024")  # fallback si env var absente
-EMPLOYEE_PWD  = os.environ.get("EMPLOYEE_PASSWORD", "employe2024")     # mot de passe espace employé
+# Pas de fallback : crash au démarrage si absent (sécurité).
+DASHBOARD_PWD = os.environ["DASHBOARD_PASSWORD"]
+EMPLOYEE_PWD  = os.environ["EMPLOYEE_PASSWORD"]
 
 # Token simple pour l'espace employé (pas de cookie)
 import hashlib as _hl
@@ -262,13 +264,27 @@ def _schedule_immediate(delay_min: int = 5):
     _auto_timer.daemon = True
     _auto_timer.start()
 
+# Rate limiting login : 5 tentatives / 15 min / IP
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SEC   = 900  # 15 min
+
 @app.route("/login", methods=["GET","POST"])
 def login():
+    ip = request.remote_addr or "unknown"
+    now = time.time()
+    _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < _LOGIN_WINDOW_SEC]
+
+    if len(_login_attempts[ip]) >= _LOGIN_MAX_ATTEMPTS:
+        return render_template_string(LOGIN, err="Trop de tentatives. Réessaie dans 15 min."), 429
+
     err = ""
     if request.method == "POST":
         if request.form.get("pwd") == DASHBOARD_PWD:
             session["ok"] = True
+            _login_attempts.pop(ip, None)
             return redirect("/")
+        _login_attempts[ip].append(now)
         err = "Mot de passe incorrect"
     return render_template_string(LOGIN, err=err)
 
