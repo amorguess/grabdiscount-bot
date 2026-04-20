@@ -3715,11 +3715,17 @@ if __name__ == "__main__":
     get_config()
     # Importe au démarrage les emails déjà générés mais pas encore dans accounts.json
     _reload_accounts()
-    # Active l'auto-génération dès le démarrage (5 emails toutes les 65 min)
-    _auto_gen["enabled"] = True
-    _schedule_next()
+    # Active l'auto-génération uniquement si cookie iCloud présent (= Mac).
+    # Sur VPS, pas de cookie → gen fait par LaunchAgent Mac puis sync.
+    _cookie_file = _CODE_DIR / "icloud_gen" / "cookie.txt"
+    _has_cookie  = _cookie_file.is_file() and _cookie_file.stat().st_size > 0
+    if _has_cookie:
+        _auto_gen["enabled"] = True
+        _schedule_next()
+        print(f"🤖 Auto-génération iCloud HME activée — 5 emails toutes les 65 min")
+    else:
+        print(f"ℹ️  Auto-génération iCloud désactivée (pas de cookie.txt — gen délégué au LaunchAgent Mac)")
     monitoring.schedule_daily_summary()
-    print(f"🤖 Auto-génération iCloud HME activée — 5 emails toutes les 65 min")
     print(f"📊 Résumé quotidien Telegram activé — 8h Bangkok")
     print(f"🛵 GrabDiscount QG → http://localhost:{a.port}   |   pwd: {DASHBOARD_PWD}")
     from waitress import serve
