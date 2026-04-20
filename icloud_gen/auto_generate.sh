@@ -78,6 +78,16 @@ if [ "$GENERATED" -gt 0 ]; then
         notify "⚠️ GrabDiscount: échec post-process (identité/adresse). Voir generation.log"
     fi
 
+    # ─── Sync accounts.json → VPS (merge safe, non destructif) ───
+    log "☁️ Sync accounts.json → VPS"
+    SYNC_OUT=$(/usr/bin/python3 "$ICLOUD_DIR/sync_accounts_to_vps.py" 2>&1)
+    SYNC_EXIT=$?
+    echo "$SYNC_OUT" >> "$LOG_FILE"
+    if [ "$SYNC_EXIT" -ne 0 ]; then
+        log "⚠ sync VPS exit=$SYNC_EXIT"
+        notify "⚠️ GrabDiscount: sync accounts.json → VPS échec. Voir generation.log"
+    fi
+
     # Reset compteur d'échecs si existait
     rm -f /tmp/grabdiscount_autogen_fails
 else
