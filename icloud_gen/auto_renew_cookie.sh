@@ -12,8 +12,10 @@ ADMIN_ID="8711205448"
 log() { echo "[$(date '+%H:%M:%S')] $1"; }
 
 # 1. Extraire le cookie depuis Chrome
+# /usr/bin/python3 = macOS system 3.9, seul interp qui a `browser_cookie3`
+# (le Homebrew python3 ne l'a pas, d'où le fallback explicite).
 log "🔍 Extraction cookie iCloud depuis Chrome…"
-python3 "$GRAB_DIR/icloud_gen/grab_cookie_from_chrome.py"
+/usr/bin/python3 "$GRAB_DIR/icloud_gen/grab_cookie_from_chrome.py"
 
 if [ $? -ne 0 ] || [ ! -s "$COOKIE" ]; then
     log "❌ Échec extraction cookie"
