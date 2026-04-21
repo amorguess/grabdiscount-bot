@@ -122,10 +122,10 @@ Email iCloud + Identité (nom, prénom, adresse Bangkok) + Numéro tél (manuel)
 - ✅ Plans Starter/Pro + parrainage (-5€/-5€) + pause abonnement — schéma + bot livrés
 - ✅ **Premier compte Grab créé end-to-end** (2026-04-20, `bratty-meshes.0a@icloud.com`) — flux manuel validé
 - ✅ **Refactor pro Phase 2 quater livré** (2026-04-21) : Flask factory + blueprints + security (auth/session/rate-limit HMAC) + tous admin routes (stats, dispo, accounts, orders, messages, restaurants)
-- ✅ **Dashboard v2 déployé en parallèle sur VPS** : `systemd grabdiscount-v2.service` actif sur `127.0.0.1:5002`, nginx Phase A (tout → legacy 5001), Phase B `/v2/*` prête à activer
+- ✅ **Dashboard v2 déployé en parallèle sur VPS** : `systemd grabdiscount-v2.service` actif sur `127.0.0.1:5002`
+- ✅ **Phase B nginx activée** : `https://passfooddelivery.online/v2/*` → v2, `/*` → legacy, `/health/v2` probe dédié
 - ✅ **202 tests passing, 96% coverage** sur `app/`
 - ✅ **Cloisonnement sécurité validé** : UFW = 22/80/443 only, Flask bind localhost (HOST=0.0.0.0 refusé explicite), nginx seul frontier, Cloudflare en amont
-- ⏳ Dashboard v2 : pas encore exposé publiquement (nginx Phase B commentée) — décommenter `/v2/` dans `ops/nginx/grabdiscount.conf` pour activer
 - ⏳ **Pas encore lancé** — 0 client, 0 abonné
 - 📋 ~113 comptes iCloud prêts (available), signup Grab à la volée
 - 🧪 Tests à faire : /start depuis compte secondaire, paiement Wise → /invite, parrainage link, cap_reached upsell
