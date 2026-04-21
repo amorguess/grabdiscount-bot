@@ -18,11 +18,22 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 
 ## Infrastructure
 - **VPS Contabo** : `82.197.70.190` (Ubuntu 24.04, 6 vCPU, 12GB RAM)
-- **Dashboard admin** : `http://82.197.70.190:5001` (mot de passe: grabadmin2024)
-- **VS Code VPS** : `http://82.197.70.190:8080`
+- **Domaine public** : `passfooddelivery.online` (Cloudflare → nginx sur VPS)
+- **Dashboard legacy** : `127.0.0.1:5001` (via nginx sur domaine) — mdp: `grabadmin2024`
+- **Dashboard v2** : `127.0.0.1:5002` (systemd `grabdiscount-v2.service`) — Phase B nginx commentée
+- **VS Code VPS** : `http://82.197.70.190:8080` (port UFW-filtré, accès tunnel SSH)
 - **GitHub** : https://github.com/amorguess/grabdiscount-bot
-- **Données** : `/data/` sur le VPS (accounts.json, orders.json, messages.json)
+- **Données** : `/data/` sur le VPS (accounts.json, orders.json, messages.json, status.json, subscribers.json)
 - **Code** : `/root/grabdiscount/` sur le VPS
+
+### Cloisonnement réseau (défense en profondeur)
+```
+Internet ─► Cloudflare (WAF/SSL) ─► nginx:80/443 ─► Flask sur 127.0.0.1
+```
+- UFW : **seuls 22/80/443 ouverts** (5001/5002/8080 filtered)
+- Flask legacy + v2 bind `127.0.0.1` uniquement (v2 refuse explicitement `HOST=0.0.0.0`)
+- nginx = seul frontier public, Cloudflare en amont
+- Voir `ops/nginx/grabdiscount.conf` et `ops/DEPLOY_V2.md`
 
 ## Bot Telegram
 - Token : dans `.env` → `BOT_TOKEN`
@@ -32,8 +43,10 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 - Le bot tourne comme subprocess de `start.py` via systemd
 
 ## Fichiers principaux
-- `start.py` → lance dashboard + bot sur VPS (systemd)
-- `dashboard.py` → interface web admin Flask (port 5001)
+
+### Legacy (encore en prod, port 5001)
+- `start.py` → lance dashboard legacy + bot sur VPS (systemd `grabdiscount.service`)
+- `dashboard.py` → interface web admin Flask legacy
 - `bot.py` → bot Telegram clients (v20+, python-telegram-bot)
 - `subscribers.py` → gestion abonnés + plans + pause + parrainage (is_active, can_order, add_subscriber(plan=, parrain_id=), get_monthly_usage, pause_subscriber, resume_subscriber, get_referral_credit, get_filleuls, PLAN_CAPS, PLAN_PRICES)
 - `icloud_gen/run.py` → génère emails iCloud HME (nécessite cookie.txt valide)
@@ -41,6 +54,19 @@ Admin passe les commandes manuellement avec des comptes Grab en stock (1 compte 
 - `icloud_gen/post_process_emails.py` → associe identité FR + adresse Bangkok → accounts.json
 - `identity_gen/` → génère identités françaises + adresses Bangkok (seed MD5 déterministe)
 - `restaurant_scraper.py` → scrape restaurants Grab
+
+### Refactor v2 (nouvelle archi `app/`, port 5002, parallèle au legacy)
+- `run_dashboard_v2.py` → entry point v2 (refuse `HOST=0.0.0.0`, bind 127.0.0.1)
+- `app/core/` → config (`Settings` via pydantic), logging structuré, version
+- `app/storage/` → stores atomiques (`accounts`, `orders`, `messages`, `subscribers`, `status`, `restaurants`) avec `AtomicJSONFile` + verrous
+- `app/dashboard/app.py` → `create_app()` factory Flask + `ProxyFix` (X-Forwarded-*)
+- `app/dashboard/stores.py` → `Stores` dataclass (DI) attaché à `app.config["STORES"]`
+- `app/dashboard/security.py` → `login_required`, `api_login_required`, `employee_required` (HMAC), `LoginRateLimiter` (sliding window)
+- `app/dashboard/api/` → blueprints : auth / health / admin (stats, dispo) / accounts / orders / messages / restaurants
+- `tests/` → 202 tests, 96% coverage sur `app/`
+- `ops/nginx/grabdiscount.conf` → conf nginx de référence (Cloudflare real IP, rate limit zones, Phase B commentée)
+- `ops/systemd/grabdiscount-v2.service` → unit systemd hardened (NoNewPrivileges, ProtectSystem=strict, ReadWritePaths=/data /root/grabdiscount)
+- `ops/DEPLOY_V2.md` → procédure de déploiement zéro-port-exposé + rollback
 
 ## Flux commande (v5 — bot.py)
 1. Client `/start` → envoie screenshot panier Grab
@@ -89,13 +115,17 @@ Si un non-abonné tape `/start` (ou autre) au bot, `_refuser_acces` renvoie un m
 ## Compte full = 
 Email iCloud + Identité (nom, prénom, adresse Bangkok) + Numéro tél (manuel)
 
-## État actuel (2026-04-20)
+## État actuel (2026-04-21)
 - ✅ Bot VPS actif, token rotation faite
 - ✅ iCloud auto-gen Mac opérationnel (LaunchAgent + post_process + sync VPS)
 - ✅ Join Request auto-approval activé (bot admin du canal)
 - ✅ Plans Starter/Pro + parrainage (-5€/-5€) + pause abonnement — schéma + bot livrés
 - ✅ **Premier compte Grab créé end-to-end** (2026-04-20, `bratty-meshes.0a@icloud.com`) — flux manuel validé
-- ⏳ Dashboard : pas encore de vue subscribers (Phase 2) — admin utilise `/abonnes` `/invite` etc. en attendant
+- ✅ **Refactor pro Phase 2 quater livré** (2026-04-21) : Flask factory + blueprints + security (auth/session/rate-limit HMAC) + tous admin routes (stats, dispo, accounts, orders, messages, restaurants)
+- ✅ **Dashboard v2 déployé en parallèle sur VPS** : `systemd grabdiscount-v2.service` actif sur `127.0.0.1:5002`, nginx Phase A (tout → legacy 5001), Phase B `/v2/*` prête à activer
+- ✅ **202 tests passing, 96% coverage** sur `app/`
+- ✅ **Cloisonnement sécurité validé** : UFW = 22/80/443 only, Flask bind localhost (HOST=0.0.0.0 refusé explicite), nginx seul frontier, Cloudflare en amont
+- ⏳ Dashboard v2 : pas encore exposé publiquement (nginx Phase B commentée) — décommenter `/v2/` dans `ops/nginx/grabdiscount.conf` pour activer
 - ⏳ **Pas encore lancé** — 0 client, 0 abonné
 - 📋 ~113 comptes iCloud prêts (available), signup Grab à la volée
 - 🧪 Tests à faire : /start depuis compte secondaire, paiement Wise → /invite, parrainage link, cap_reached upsell
@@ -126,9 +156,19 @@ cd /root/grabdiscount && git pull origin main && systemctl restart grabdiscount
 
 ## Commandes VPS utiles
 ```bash
+# Legacy (bot + dashboard 5001)
 systemctl restart grabdiscount   # redémarrer
 journalctl -u grabdiscount -f    # voir les logs
 systemctl status grabdiscount    # vérifier statut
+
+# Dashboard v2 (5002)
+systemctl restart grabdiscount-v2
+journalctl -u grabdiscount-v2 -f
+systemctl status grabdiscount-v2
+
+# Vérifier cloisonnement (aucun port app exposé au net)
+ss -tlnp | grep -E "5001|5002"   # doit TOUJOURS être 127.0.0.1:*
+ufw status                        # doit montrer 22/80/443 only
 ```
 
 ## Ce qui NE fonctionne PAS sur VPS
