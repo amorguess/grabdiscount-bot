@@ -9,9 +9,10 @@ Type=simple
 User=root
 WorkingDirectory=/root/grabdiscount
 EnvironmentFile=/root/grabdiscount/.env
-# Force le binding localhost-only (défense en profondeur)
-Environment=HOST=127.0.0.1
-Environment=PORT=5002
+# Vars dédiées v2 — évite la collision avec `PORT` du legacy dans le .env
+# partagé. Force le binding localhost-only (défense en profondeur).
+Environment=DASHBOARD_V2_HOST=127.0.0.1
+Environment=DASHBOARD_V2_PORT=5002
 ExecStart=/root/grabdiscount/.venv/bin/python run_dashboard_v2.py
 Restart=on-failure
 RestartSec=3

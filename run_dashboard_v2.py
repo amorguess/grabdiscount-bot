@@ -26,7 +26,9 @@ from app.dashboard.app import create_app
 def main() -> None:
     configure_logging()
 
-    host = os.environ.get("HOST", "127.0.0.1")
+    # `DASHBOARD_V2_HOST` / `DASHBOARD_V2_PORT` en priorité — évite les
+    # collisions avec le legacy qui utilise `PORT` dans le même `.env`.
+    host = os.environ.get("DASHBOARD_V2_HOST") or os.environ.get("HOST") or "127.0.0.1"
     if host not in ("127.0.0.1", "localhost", "::1"):
         print(
             f"error: HOST={host!r} refusé — bind localhost only (nginx gère l'exposition).",
@@ -34,7 +36,8 @@ def main() -> None:
         )
         sys.exit(2)
 
-    port = int(os.environ.get("PORT", "5002"))
+    raw_port = os.environ.get("DASHBOARD_V2_PORT") or "5002"
+    port = int(raw_port)
     app = create_app()
     app.run(host=host, port=port, debug=False)
 
