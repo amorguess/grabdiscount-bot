@@ -2133,24 +2133,44 @@ DASH = """<!DOCTYPE html>
 <title>GrabDiscount QG</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
-:root{--bg:#080b12;--s1:#0d1117;--s2:#111827;--s3:#1f2937;--s4:#374151;
-  --t1:#f9fafb;--t2:#9ca3af;--t3:#6b7280;--green:#00b14f;--blue:#3b82f6;
-  --orange:#f59e0b;--red:#ef4444;--purple:#8b5cf6;--cyan:#06b6d4}
+:root{
+  /* Surfaces — palette plus douce, contrastes affinés */
+  --bg:#07090e; --s1:#0e1116; --s2:#141921; --s3:#222936; --s4:#2e3645;
+  /* Texte — t2 plus lisible (WCAG AA), t3 limité aux secondaires */
+  --t1:#f5f7fa; --t2:#a8b2c2; --t3:#6e7686;
+  /* Accent marque + sémantique */
+  --green:#00d162; --green-soft:rgba(0,209,98,.14);
+  --blue:#3b82f6;  --orange:#f59e0b; --red:#f43f5e;
+  --purple:#a78bfa; --cyan:#06b6d4; --pink:#ec4899;
+  /* Tokens design system */
+  --r-sm:8px; --r-md:12px; --r-lg:14px; --r-xl:20px;
+  --sh-sm:0 1px 2px rgba(0,0,0,.5);
+  --sh-md:0 4px 14px rgba(0,0,0,.4),0 1px 2px rgba(0,0,0,.5);
+  --sh-lg:0 12px 32px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.6);
+  --tr-fast:120ms cubic-bezier(.4,0,.2,1);
+  --tr:180ms cubic-bezier(.4,0,.2,1);
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--t1);display:flex}
+body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--t1);display:flex;-webkit-font-smoothing:antialiased;font-feature-settings:'cv11','ss01'}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--s3);border-radius:99px}
+::-webkit-scrollbar-thumb:hover{background:var(--s4)}
+:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:6px}
 
 /* SIDEBAR */
-.sidebar{width:220px;min-width:220px;background:var(--s1);border-right:1px solid var(--s3);
-  display:flex;flex-direction:column;height:100vh;padding:20px 12px}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 12px 24px;border-bottom:1px solid var(--s3);margin-bottom:16px}
-.brand-logo{font-size:1.6rem}
-.brand-name{font-size:1rem;font-weight:800;color:var(--t1)}
-.brand-sub{font-size:.65rem;color:var(--t3);margin-top:1px}
-.nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;
-  cursor:pointer;font-size:.875rem;color:var(--t2);transition:.15s;margin-bottom:2px;border:none;background:none;width:100%;text-align:left}
+.sidebar{width:232px;min-width:232px;background:linear-gradient(180deg,var(--s1) 0%,#0a0d12 100%);
+  border-right:1px solid var(--s3);display:flex;flex-direction:column;height:100vh;padding:22px 14px;position:relative}
+.brand{display:flex;align-items:center;gap:12px;padding:4px 8px 22px;border-bottom:1px solid var(--s3);margin-bottom:18px}
+.brand-logo{font-size:1.75rem;filter:drop-shadow(0 0 12px rgba(0,209,98,.4))}
+.brand-name{font-size:1.05rem;font-weight:800;color:var(--t1);letter-spacing:-.01em}
+.brand-sub{font-size:.65rem;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:.12em}
+.nav-item{position:relative;display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:var(--r-md);
+  cursor:pointer;font-size:.875rem;color:var(--t2);transition:var(--tr);margin-bottom:3px;border:none;background:none;width:100%;text-align:left;font-family:inherit;letter-spacing:-.005em}
 .nav-item:hover{background:var(--s2);color:var(--t1)}
-.nav-item.active{background:var(--green)15;color:var(--green);font-weight:600}
+.nav-item.active{background:var(--green-soft);color:var(--green);font-weight:600}
+.nav-item.active::before{content:'';position:absolute;left:-14px;top:8px;bottom:8px;width:3px;background:var(--green);border-radius:0 3px 3px 0;box-shadow:0 0 8px var(--green)}
 .nav-icon{font-size:1.1rem;width:24px;text-align:center}
 .nav-badge{margin-left:auto;background:var(--red);color:#fff;border-radius:99px;
   font-size:.65rem;padding:2px 7px;font-weight:700}
@@ -2166,29 +2186,34 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 /* MAIN */
 .main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden;min-width:0}
-.topbar{padding:16px 24px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:12px;flex-shrink:0}
-.page-title{font-size:1.1rem;font-weight:700;color:var(--t1)}
+.topbar{padding:18px 26px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:14px;flex-shrink:0;background:var(--s1)}
+.page-title{font-size:1.15rem;font-weight:700;color:var(--t1);letter-spacing:-.015em}
 .page-sub{font-size:.8rem;color:var(--t3);margin-left:auto}
 .content{flex:1;overflow-y:auto;overflow-x:hidden;padding:24px}
 
 /* CARDS */
 .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
-.card{background:var(--s2);border:1px solid var(--s3);border-radius:14px;padding:20px}
-.card-sm{background:var(--s2);border:1px solid var(--s3);border-radius:14px;padding:16px}
-.kpi-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--t3);margin-bottom:8px}
-.kpi-val{font-size:2rem;font-weight:800;line-height:1}
-.kpi-sub{font-size:.75rem;color:var(--t3);margin-top:6px}
+.card{background:var(--s2);border:1px solid var(--s3);border-radius:var(--r-lg);padding:20px;box-shadow:var(--sh-sm);transition:var(--tr)}
+.card:hover{border-color:var(--s4);box-shadow:var(--sh-md)}
+.card-sm{background:var(--s2);border:1px solid var(--s3);border-radius:var(--r-lg);padding:16px;box-shadow:var(--sh-sm);transition:var(--tr)}
+.card-sm:hover{border-color:var(--s4)}
+.card-hero{background:linear-gradient(135deg,var(--s2) 0%,#1a2030 100%);border:1px solid var(--s3);border-radius:var(--r-xl);padding:28px;box-shadow:var(--sh-md)}
+.kpi-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--t3);margin-bottom:10px;font-weight:600}
+.kpi-val{font-size:2.1rem;font-weight:800;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kpi-sub{font-size:.78rem;color:var(--t3);margin-top:8px}
 .c-green{color:var(--green)} .c-blue{color:var(--blue)} .c-orange{color:var(--orange)}
 .c-red{color:var(--red)} .c-purple{color:var(--purple)} .c-cyan{color:var(--cyan)}
 
 /* TABLE */
-.table-wrap{background:var(--s2);border:1px solid var(--s3);border-radius:14px;overflow:hidden}
+.table-wrap{background:var(--s2);border:1px solid var(--s3);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--sh-sm)}
 .table-wrap table{display:block;max-height:520px;overflow-y:auto}
-.table-header{padding:16px 20px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:12px}
-.table-title{font-size:.9rem;font-weight:700}
+.table-header{padding:16px 20px;border-bottom:1px solid var(--s3);display:flex;align-items:center;gap:12px;background:linear-gradient(180deg,var(--s2),transparent)}
+.table-title{font-size:.92rem;font-weight:700;letter-spacing:-.01em}
 table{width:100%;border-collapse:collapse}
-th{font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:var(--t3);
+tbody tr{transition:background var(--tr-fast)}
+tbody tr:hover{background:var(--s1)}
+th{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--t3);
    padding:11px 16px;text-align:left;border-bottom:1px solid var(--s3);background:var(--s1)}
 td{padding:13px 16px;border-bottom:1px solid #0d111780;font-size:.85rem;color:var(--t2)}
 tr:last-child td{border:none}
@@ -2196,37 +2221,43 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 .mono{font-family:monospace;font-size:.8rem}
 
 /* PILLS */
-.pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:99px;font-size:.72rem;font-weight:600;white-space:nowrap}
-.pill-green{background:#00b14f18;color:var(--green)}
-.pill-blue{background:#3b82f618;color:var(--blue)}
-.pill-orange{background:#f59e0b18;color:var(--orange)}
-.pill-red{background:#ef444418;color:var(--red)}
-.pill-purple{background:#8b5cf618;color:var(--purple)}
-.pill-gray{background:var(--s3);color:var(--t3)}
-.pill-cyan{background:#06b6d418;color:var(--cyan)}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:99px;font-size:.72rem;font-weight:600;white-space:nowrap;border:1px solid transparent;letter-spacing:.01em}
+.pill-green{background:rgba(0,209,98,.14);color:var(--green);border-color:rgba(0,209,98,.25)}
+.pill-blue{background:rgba(59,130,246,.14);color:var(--blue);border-color:rgba(59,130,246,.25)}
+.pill-orange{background:rgba(245,158,11,.14);color:var(--orange);border-color:rgba(245,158,11,.25)}
+.pill-red{background:rgba(244,63,94,.14);color:var(--red);border-color:rgba(244,63,94,.25)}
+.pill-purple{background:rgba(167,139,250,.14);color:var(--purple);border-color:rgba(167,139,250,.25)}
+.pill-gray{background:var(--s3);color:var(--t2);border-color:var(--s4)}
+.pill-cyan{background:rgba(6,182,212,.14);color:var(--cyan);border-color:rgba(6,182,212,.25)}
 
 /* BUTTONS */
-.btn{padding:8px 16px;border-radius:8px;border:none;font-size:.82rem;font-weight:600;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px}
-.btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
-.btn-primary{background:var(--green);color:#fff}
-.btn-secondary{background:var(--s3);color:var(--t1)}
+.btn{padding:9px 16px;border-radius:var(--r-sm);border:1px solid transparent;font-size:.82rem;font-weight:600;cursor:pointer;transition:var(--tr);display:inline-flex;align-items:center;gap:6px;font-family:inherit;letter-spacing:-.005em;line-height:1.2}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn-primary{background:var(--green);color:#01210e;font-weight:700;box-shadow:0 1px 0 rgba(255,255,255,.1) inset,0 4px 12px rgba(0,209,98,.25)}
+.btn-primary:hover{box-shadow:0 1px 0 rgba(255,255,255,.15) inset,0 6px 18px rgba(0,209,98,.35)}
+.btn-secondary{background:var(--s2);color:var(--t1);border-color:var(--s3)}
+.btn-secondary:hover{background:var(--s3);border-color:var(--s4)}
 .btn-blue{background:var(--blue);color:#fff}
-.btn-danger{background:#ef444420;color:var(--red);border:1px solid #ef444430}
-.btn-sm{padding:5px 12px;font-size:.75rem}
-.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-danger{background:rgba(244,63,94,.14);color:var(--red);border-color:rgba(244,63,94,.3)}
+.btn-danger:hover{background:rgba(244,63,94,.22)}
+.btn-sm{padding:6px 12px;font-size:.75rem;border-radius:var(--r-sm)}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none;filter:none}
 
 /* INPUT */
-.input{background:var(--s1);border:1px solid var(--s3);border-radius:8px;padding:9px 13px;
+.input{background:var(--s1);border:1px solid var(--s3);border-radius:var(--r-sm);padding:10px 14px;
   color:var(--t1);font-size:.85rem;outline:none;transition:.2s}
-.input:focus{border-color:var(--green);box-shadow:0 0 0 3px #00b14f12}
+.input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(0,209,98,.15)}
 .input::placeholder{color:var(--t3)}
-.select{background:var(--s1);border:1px solid var(--s3);border-radius:8px;padding:9px 13px;
-  color:var(--t1);font-size:.85rem;outline:none;cursor:pointer}
+.select{background:var(--s1);border:1px solid var(--s3);border-radius:var(--r-sm);padding:10px 14px;
+  color:var(--t1);font-size:.85rem;outline:none;cursor:pointer;transition:var(--tr-fast)}
+.select:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(0,209,98,.15)}
 
 /* FILTERS */
-.filter-bar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
-.filter-pill{padding:6px 14px;border-radius:99px;font-size:.8rem;cursor:pointer;border:1px solid var(--s3);background:var(--s2);color:var(--t2);transition:.15s}
-.filter-pill:hover,.filter-pill.active{background:var(--green);color:#fff;border-color:var(--green)}
+.filter-bar{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.filter-pill{padding:6px 13px;border-radius:99px;font-size:.78rem;font-weight:500;cursor:pointer;border:1px solid var(--s3);background:transparent;color:var(--t2);transition:var(--tr-fast)}
+.filter-pill:hover{color:var(--t1);border-color:var(--s4);background:var(--s2)}
+.filter-pill.active{background:var(--green-soft);color:var(--green);border-color:rgba(0,209,98,.3);font-weight:600}
 
 /* CHAT */
 .chat-layout{display:grid;grid-template-columns:300px 1fr;height:100%;overflow:hidden}
@@ -2288,12 +2319,33 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 .empty{text-align:center;padding:60px 24px;color:var(--t3)}
 .empty-icon{font-size:2.5rem;margin-bottom:12px}
 
+/* ZONE TABS (3 zones du dashboard) */
+.zone-tabs{display:flex;gap:4px;margin-bottom:18px;background:var(--s1);padding:6px;
+  border-radius:var(--r-lg);border:1px solid var(--s3);box-shadow:var(--sh-sm)}
+.zone-tab{flex:1;padding:11px 14px;border:0;border-radius:var(--r-md);background:transparent;
+  color:var(--t2);cursor:pointer;font-weight:600;font-size:.86rem;display:flex;align-items:center;
+  justify-content:center;gap:10px;transition:var(--tr);font-family:inherit;letter-spacing:-.005em}
+.zone-tab:hover{color:var(--t1);background:var(--s2)}
+.zone-tab.active{background:var(--s3);color:var(--t1);box-shadow:var(--sh-sm)}
+.zt-flag{font-size:1.05rem;line-height:1}
+.zt-label{flex-shrink:0}
+.zt-count{font-size:.7rem;font-weight:700;padding:3px 9px;border-radius:99px;
+  background:var(--s2);color:var(--t3);border:1px solid var(--s3);font-variant-numeric:tabular-nums}
+.zone-tab.active .zt-count{background:rgba(0,209,98,.14);color:var(--green);border-color:rgba(0,209,98,.25)}
+@media(max-width:900px){
+  .zone-tab{padding:9px 8px;font-size:.78rem;gap:6px}
+  .zt-label{display:none}
+  .zt-flag{font-size:1.2rem}
+}
+
 /* GEN MODAL */
-.modal-overlay{position:fixed;inset:0;background:#00000090;z-index:300;display:none;align-items:center;justify-content:center}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(8px);z-index:300;display:none;align-items:center;justify-content:center;animation:fadeIn var(--tr) ease}
 .modal-overlay.open{display:flex}
-.modal{background:var(--s2);border:1px solid var(--s3);border-radius:18px;padding:28px;width:520px;max-width:95vw}
-.modal h2{font-size:1.1rem;font-weight:700;margin-bottom:4px}
-.modal .sub{font-size:.8rem;color:var(--t3);margin-bottom:20px}
+.modal{background:var(--s2);border:1px solid var(--s3);border-radius:var(--r-xl);padding:28px;width:520px;max-width:95vw;box-shadow:var(--sh-lg);animation:slideUp var(--tr) cubic-bezier(.16,1,.3,1)}
+.modal h2{font-size:1.15rem;font-weight:700;margin-bottom:4px;letter-spacing:-.015em}
+.modal .sub{font-size:.82rem;color:var(--t2);margin-bottom:20px}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideUp{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 .gen-log{background:var(--s1);border-radius:10px;padding:14px;font-family:monospace;font-size:.78rem;
   color:#86efac;min-height:120px;max-height:200px;overflow-y:auto;white-space:pre-wrap;margin-bottom:16px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end}
@@ -2491,27 +2543,26 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
       <span class="page-title" id="acc-title">🏭 Usine — Packs Identité</span>
       <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
         <button class="btn btn-secondary" onclick="openGenModal()">⚡ + Emails</button>
-        <span style="font-size:.75rem;color:var(--t3);background:var(--s2);padding:6px 10px;border-radius:8px" title="Nécessite un téléphone Android branché — non disponible sur VPS">📱 Usine Android : non dispo sur VPS</span>
       </div>
     </div>
     <div class="content" style="flex:1;overflow-y:auto">
 
       <!-- Onglets Zone (Grab TH / Uber AU / Uber FR) -->
-      <div id="zoneTabs" style="display:flex;gap:6px;margin-bottom:14px;background:var(--s1);padding:6px;border-radius:14px;border:1px solid var(--s3)">
-        <button class="zone-tab active" data-zone="grab_th" onclick="setZone('grab_th')"
-          style="flex:1;padding:10px 14px;border:0;border-radius:10px;background:var(--s3);color:var(--t1);cursor:pointer;font-weight:600;font-size:.85rem;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s">
-          <span>🇹🇭</span><span>Grab Thaïlande</span>
-          <span class="pill" id="zb-grab_th" style="background:#0d111766;color:var(--t2);font-size:.7rem;padding:2px 8px">—</span>
+      <div id="zoneTabs" class="zone-tabs">
+        <button class="zone-tab active" data-zone="grab_th" onclick="setZone('grab_th')">
+          <span class="zt-flag">🇹🇭</span>
+          <span class="zt-label">Grab Thaïlande</span>
+          <span class="zt-count" id="zb-grab_th">—</span>
         </button>
-        <button class="zone-tab" data-zone="uber_au" onclick="setZone('uber_au')"
-          style="flex:1;padding:10px 14px;border:0;border-radius:10px;background:transparent;color:var(--t2);cursor:pointer;font-weight:600;font-size:.85rem;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s">
-          <span>🇦🇺</span><span>Uber Eats Australie</span>
-          <span class="pill" id="zb-uber_au" style="background:#0d111766;color:var(--t3);font-size:.7rem;padding:2px 8px">—</span>
+        <button class="zone-tab" data-zone="uber_au" onclick="setZone('uber_au')">
+          <span class="zt-flag">🇦🇺</span>
+          <span class="zt-label">Uber Eats Australie</span>
+          <span class="zt-count" id="zb-uber_au">—</span>
         </button>
-        <button class="zone-tab" data-zone="uber_fr" onclick="setZone('uber_fr')"
-          style="flex:1;padding:10px 14px;border:0;border-radius:10px;background:transparent;color:var(--t2);cursor:pointer;font-weight:600;font-size:.85rem;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s">
-          <span>🇫🇷</span><span>Uber Eats France</span>
-          <span class="pill" id="zb-uber_fr" style="background:#0d111766;color:var(--t3);font-size:.7rem;padding:2px 8px">—</span>
+        <button class="zone-tab" data-zone="uber_fr" onclick="setZone('uber_fr')">
+          <span class="zt-flag">🇫🇷</span>
+          <span class="zt-label">Uber Eats France</span>
+          <span class="zt-count" id="zb-uber_fr">—</span>
         </button>
       </div>
 
@@ -2602,17 +2653,6 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
         </div>
       </div>
 
-      <!-- Note Orchestrateur (désactivé sur VPS) -->
-      <div class="card" style="margin-top:20px;border:1px solid var(--s3)">
-        <div style="padding:16px 20px;display:flex;align-items:center;gap:14px">
-          <span style="font-size:1.8rem">📱</span>
-          <div>
-            <div style="font-weight:700;margin-bottom:4px">Usine Android — Création auto de comptes Grab</div>
-            <div style="font-size:.82rem;color:var(--t3)">Nécessite un téléphone Android branché en USB avec ADB + Appium. Non disponible sur VPS. Pour activer, branchez un téléphone et relancez en local.</div>
-          </div>
-        </div>
-      </div>
-
     </div>
   </div>
 
@@ -2647,47 +2687,6 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeGenModal()">Fermer</button>
       <button class="btn btn-primary" id="genStartBtn" onclick="startGen()">🚀 Lancer la génération</button>
-    </div>
-  </div>
-</div>
-
-<!-- GRAB GEN MODAL -->
-<div class="modal-overlay" id="grabGenModal">
-  <div class="modal" style="max-width:500px">
-    <h2>🤖 Créer un compte Grab</h2>
-    <div class="sub">Pipeline automatique : OnOff → OTP → Compte Grab lié à l'email iCloud</div>
-
-    <div style="display:grid;gap:10px;margin:14px 0">
-      <div>
-        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">📧 Email iCloud (laisser vide = prochain disponible)</label>
-        <input id="ggIcloud" type="text" placeholder="ex: abc@icloud.com ou laisser vide" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
-      </div>
-      <div>
-        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">🔑 Email compte OnOff</label>
-        <input id="ggOnoffEmail" type="email" placeholder="votre@email.com" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
-      </div>
-      <div>
-        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">🔐 Mot de passe OnOff</label>
-        <input id="ggOnoffPass" type="password" placeholder="••••••••" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
-      </div>
-      <div>
-        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">📱 Numéro OnOff (avec indicatif)</label>
-        <input id="ggPhone" type="text" placeholder="+33612345678" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem;box-sizing:border-box">
-      </div>
-      <div>
-        <label style="font-size:.8rem;color:var(--t3);display:block;margin-bottom:4px">📡 Canal OTP</label>
-        <select id="ggChannel" style="width:100%;padding:8px 12px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--t1);font-size:.85rem">
-          <option value="sms">SMS</option>
-          <option value="whatsapp">WhatsApp</option>
-        </select>
-      </div>
-    </div>
-
-    <pre id="ggLog" style="background:var(--s2);border-radius:8px;padding:12px;font-size:.78rem;color:var(--t2);min-height:60px;white-space:pre-wrap;max-height:140px;overflow-y:auto">En attente…</pre>
-
-    <div class="modal-actions" style="margin-top:14px">
-      <button class="btn btn-secondary" onclick="closeGrabGenModal()">Fermer</button>
-      <button class="btn btn-primary" id="ggRunBtn" onclick="runGrabGen()" style="background:#00b14f">🚀 Créer le compte</button>
     </div>
   </div>
 </div>
@@ -2756,7 +2755,7 @@ function nav(p){
   if(p==='orders'){document.getElementById('page-orders').style.display='flex';}
   if(p==='chat'){document.getElementById('page-chat').style.display='block'; renderConvList(); _startChatPoll();}
   else { _stopChatPoll(); }
-  if(p==='accounts'){document.getElementById('page-accounts').style.display='flex'; loadPacks(); loadAutoGen(); orchStartPolling();}
+  if(p==='accounts'){document.getElementById('page-accounts').style.display='flex'; loadPacks(); loadAutoGen();}
   // Scroll top on mobile
   window.scrollTo(0,0);
   _page=p;
@@ -3251,14 +3250,9 @@ function _zErr(p){    return _zd(p).last_error || ''; }
 function setZone(z){
   if(!_zoneMeta[z]) return;
   _zone=z;
-  // UI : toggle des onglets
   document.querySelectorAll('.zone-tab').forEach(b=>{
-    const active=b.dataset.zone===z;
-    b.classList.toggle('active',active);
-    b.style.background=active?'var(--s3)':'transparent';
-    b.style.color=active?'var(--t1)':'var(--t2)';
+    b.classList.toggle('active', b.dataset.zone===z);
   });
-  // Titre + colonne adresse + reset filtre
   const meta=_zoneMeta[z];
   const t=$('acc-title'); if(t) t.textContent=meta.title;
   const tt=$('packsTableTitle'); if(tt) tt.textContent=`📦 Packs ${meta.name} — 1 compte = 1 commande`;
@@ -3480,54 +3474,6 @@ async function doBackup(){
 let _genPoll=null;
 function openGenModal(){document.getElementById('genModal').classList.add('open'); $('genLog').textContent='Prêt à générer…';}
 
-// ── GRAB GEN MODAL ────────────────────────────────────────
-let _ggPoll=null;
-function openGrabGenModal(){
-  document.getElementById('grabGenModal').classList.add('open');
-  $('ggLog').textContent='Remplis les champs puis clique sur Créer le compte.';
-  $('ggRunBtn').disabled=false;
-  // Pré-remplit depuis .env si dispo
-  fetch('/api/grabgen/config').then(r=>r.json()).then(d=>{
-    if(d.onoff_email) $('ggOnoffEmail').value=d.onoff_email;
-  });
-}
-function closeGrabGenModal(){
-  document.getElementById('grabGenModal').classList.remove('open');
-  if(_ggPoll){clearInterval(_ggPoll);_ggPoll=null;}
-}
-async function runGrabGen(){
-  const payload={
-    icloud_email: $('ggIcloud').value.trim(),
-    onoff_email:  $('ggOnoffEmail').value.trim(),
-    onoff_pass:   $('ggOnoffPass').value.trim(),
-    phone:        $('ggPhone').value.trim(),
-    channel:      $('ggChannel').value,
-  };
-  if(!payload.onoff_email||!payload.onoff_pass||!payload.phone){
-    toast('⚠ Email OnOff, mot de passe et numéro requis',false); return;
-  }
-  $('ggRunBtn').disabled=true;
-  $('ggLog').textContent='🚀 Pipeline lancé… ⏳ Ouverture Grab + connexion OnOff…';
-  const r=await fetch('/api/grabgen/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  const d=await r.json();
-  if(!d.ok){toast('❌ '+d.msg,false);$('ggRunBtn').disabled=false;return;}
-  // Poll statut
-  _ggPoll=setInterval(async()=>{
-    const sr=await fetch('/api/grabgen/status'); const sd=await sr.json();
-    $('ggLog').textContent=sd.log||'';
-    const el=$('ggLog'); el.scrollTop=el.scrollHeight;
-    if(!sd.running){
-      clearInterval(_ggPoll);_ggPoll=null;
-      $('ggRunBtn').disabled=false;
-      if(sd.last_result){
-        toast('🎉 Compte Grab créé !');
-        loadAccounts();
-      } else {
-        toast('⚠ Pipeline terminé — vérifier les logs',false);
-      }
-    }
-  },3000);
-}
 function closeGenModal(){document.getElementById('genModal').classList.remove('open');if(_genPoll){clearInterval(_genPoll);_genPoll=null;}}
 async function startGen(){
   const n=parseInt($('genCount').value)||5;
@@ -3542,62 +3488,6 @@ async function startGen(){
     const el=$('genLog'); el.scrollTop=el.scrollHeight;
     if(!sd.running){clearInterval(_genPoll);_genPoll=null;$('genStartBtn').disabled=false;toast('✅ Génération terminée !');loadAccounts();}
   },1000);
-}
-
-// ── ORCHESTRATEUR ─────────────────────────────────────────
-let _orchPoll = null;
-
-async function orchStart(){
-  const r=await fetch('/api/orch/start',{method:'POST'}); const d=await r.json();
-  if(d.ok){toast('🏭 Usine démarrée !');orchStartPolling();}
-  else toast('⚠ '+d.msg,false);
-}
-async function orchStop(){
-  await fetch('/api/orch/stop',{method:'POST'});
-  toast('⏹ Usine arrêtée');
-}
-function orchStartPolling(){
-  if(_orchPoll)clearInterval(_orchPoll);
-  _orchPoll=setInterval(orchRefresh,3000);
-  orchRefresh();
-}
-async function orchRefresh(){
-  try{
-    const r=await fetch('/api/orch/status'); const s=await r.json();
-    // Boutons
-    const startBtn=$('orchStartBtn'); const stopBtn=$('orchStopBtn');
-    if(startBtn) startBtn.style.display=s.running?'none':'inline-flex';
-    if(stopBtn) stopBtn.style.display=s.running?'inline-flex':'none';
-    // Stats
-    if($('orchTotal')) $('orchTotal').textContent=s.total_created||0;
-    if($('orchFailed')) $('orchFailed').textContent=s.total_failed||0;
-    if($('orchSpeed')) $('orchSpeed').textContent=(s.speed||0)+' comptes/h';
-    const workers=Object.values(s.workers||{});
-    if($('orchWorkers')) $('orchWorkers').textContent=workers.filter(w=>w.status!=='stopped').length;
-    // Workers table
-    const tbody=$('orchWorkersTable');
-    if(tbody&&workers.length){
-      const statusEmoji={waiting_email:'⏳',buying_phone:'💳',registering:'🤖',idle:'✅',error:'❌',stopped:'⏹',starting:'🔄'};
-      tbody.innerHTML=workers.map((w,i)=>`<tr>
-        <td class="mono" style="color:var(--purple)">device-${i+1}</td>
-        <td>${statusEmoji[w.status]||'❓'} ${w.status}</td>
-        <td style="color:var(--t3);font-size:.75rem">${escHtml(w.current_email||'—')}</td>
-        <td style="color:var(--green);font-family:monospace;font-size:.78rem">${escHtml(w.current_phone||'—')}</td>
-        <td style="color:var(--green)">${w.created}</td>
-        <td style="color:var(--orange)">${w.failed}</td>
-      </tr>`).join('');
-    }
-    // Refresh packs table pendant que l'usine tourne
-    if(s.running) loadPacks();
-    // Devices count
-    try{
-      const dr=await fetch('/api/orch/devices'); const dd=await dr.json();
-      if($('orchDevices')) $('orchDevices').textContent=(dd.devices||[]).length;
-    }catch(e){}
-    // Log
-    const logEl=$('orchLog');
-    if(logEl){logEl.textContent=(s.log||[]).join('\\n');logEl.scrollTop=logEl.scrollHeight;}
-  }catch(e){}
 }
 
 // ── RECENT ACTIVITY ───────────────────────────────────────
