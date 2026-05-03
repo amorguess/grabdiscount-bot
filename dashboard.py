@@ -269,6 +269,98 @@ _login_attempts: dict[str, list[float]] = defaultdict(list)
 _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW_SEC   = 900  # 15 min
 
+# ─────────────────────────────────────────────────────────────
+#  2FA TOTP (optionnel — activé si DASHBOARD_TOTP_SECRET défini)
+# ─────────────────────────────────────────────────────────────
+DASHBOARD_TOTP_SECRET = os.environ.get("DASHBOARD_TOTP_SECRET", "").strip()
+
+
+def _totp_required() -> bool:
+    """2FA actif uniquement si le secret est défini en env."""
+    return bool(DASHBOARD_TOTP_SECRET)
+
+
+def _verify_totp(code: str) -> bool:
+    """Vérifie un code TOTP (6 chiffres) contre le secret env.
+
+    Tolère ±1 fenêtre (= 30s) pour absorber le décalage d'horloge.
+    Retourne True silencieusement si la 2FA n'est pas activée (compat).
+    """
+    if not _totp_required():
+        return True
+    if not code or not code.isdigit() or len(code) != 6:
+        return False
+    try:
+        import pyotp  # lazy import — évite crash au boot si lib pas installée
+        totp = pyotp.TOTP(DASHBOARD_TOTP_SECRET)
+        return totp.verify(code, valid_window=1)
+    except ImportError:
+        # pyotp manquant → on log une erreur mais on n'expose pas la fail
+        print("⚠ pyotp non installé — 2FA désactivée. `pip install pyotp`")
+        return True
+
+
+# ─────────────────────────────────────────────────────────────
+#  AUDIT LOG (NDJSON append-only — /data/audit.log)
+# ─────────────────────────────────────────────────────────────
+AUDIT_F = BASE / "audit.log"
+_audit_lock = threading.Lock()
+
+
+def _audit(action: str, **fields):
+    """Log une action admin en NDJSON (1 ligne = 1 événement).
+
+    Fields capturés systématiquement : ts, ip, ua, action.
+    Fields supplémentaires libres (email, zone, status, etc.).
+    Échec silencieux si I/O fail (ne casse pas l'action métier).
+    """
+    try:
+        entry = {
+            "ts":     datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            "ip":     request.remote_addr if request else None,
+            "ua":     (request.headers.get("User-Agent","")[:120] if request else ""),
+            "action": action,
+            **fields,
+        }
+        with _audit_lock:
+            with open(AUDIT_F, "a", encoding="utf-8") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                try:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                finally:
+                    fcntl.flock(f, fcntl.LOCK_UN)
+    except Exception:
+        pass
+
+
+@app.route("/api/audit")
+@auth
+def api_audit():
+    """Retourne les N derniers événements (défaut 200, max 2000)."""
+    try:
+        n = min(int(request.args.get("n", 200)), 2000)
+    except (TypeError, ValueError):
+        n = 200
+    if not AUDIT_F.exists():
+        return jsonify({"ok": True, "entries": [], "total": 0})
+    try:
+        with open(AUDIT_F, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        entries = []
+        for line in lines[-n:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        entries.reverse()  # plus récent d'abord
+        return jsonify({"ok": True, "entries": entries, "total": len(entries)})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e), "entries": []}), 500
+
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     ip = request.remote_addr or "unknown"
@@ -280,13 +372,21 @@ def login():
 
     err = ""
     if request.method == "POST":
-        if request.form.get("pwd") == DASHBOARD_PWD:
+        pwd_ok  = request.form.get("pwd") == DASHBOARD_PWD
+        totp_ok = _verify_totp((request.form.get("totp") or "").strip())
+        if pwd_ok and totp_ok:
             session["ok"] = True
             _login_attempts.pop(ip, None)
+            _audit("login_success", totp=_totp_required())
             return redirect("/")
         _login_attempts[ip].append(now)
-        err = "Mot de passe incorrect"
-    return render_template_string(LOGIN, err=err)
+        if not pwd_ok:
+            err = "Mot de passe incorrect"
+            _audit("login_fail", reason="bad_password")
+        else:
+            err = "Code 2FA invalide"
+            _audit("login_fail", reason="bad_totp")
+    return render_template_string(LOGIN, err=err, totp_required=_totp_required())
 
 @app.route("/logout")
 def logout():
@@ -325,6 +425,148 @@ def api_bot_health():
         return jsonify({"alive": alive, "msg": f"PIDs: {', '.join(pids)}" if alive else "Bot hors ligne"})
     except Exception as e:
         return jsonify({"alive": False, "msg": str(e)})
+
+# ─────────────────────────────────────────────────────────────
+#  ALERTES PROACTIVES (cookie iCloud / stock runway / bot / etc.)
+# ─────────────────────────────────────────────────────────────
+def _alerts_payload():
+    """Calcule la liste des alertes actives. Pure → testable.
+
+    Catégories renvoyées :
+      - severity ∈ {info, warn, error}
+      - id        : clef stable pour deduplication côté UI
+      - title     : titre court
+      - detail    : description actionnable
+      - cta_url   : URL cliquable optionnelle (lien vers la zone du dashboard)
+    """
+    out = []
+
+    # 1. Cookie iCloud (expire après ~3 jours d'inactivité Apple)
+    cookie_path = _CODE_DIR / "icloud_gen" / "cookie.txt"
+    if not cookie_path.exists():
+        out.append({
+            "id": "cookie_missing", "severity": "error",
+            "title": "Cookie iCloud absent",
+            "detail": "Aucun cookie.txt — la génération d'emails est bloquée. Upload via le bouton 🍪 Cookie.",
+        })
+    else:
+        try:
+            mtime = datetime.datetime.fromtimestamp(cookie_path.stat().st_mtime)
+            age_h = (datetime.datetime.now() - mtime).total_seconds() / 3600
+            if age_h > 60:  # > 60h → en zone rouge
+                out.append({
+                    "id": "cookie_old", "severity": "error",
+                    "title": f"Cookie iCloud trop vieux ({int(age_h)}h)",
+                    "detail": "Probable expiration sous peu. Renouvelle via 🍪 Cookie ou laisse l'auto-renew tourner.",
+                })
+            elif age_h > 36:
+                out.append({
+                    "id": "cookie_aging", "severity": "warn",
+                    "title": f"Cookie iCloud vieillit ({int(age_h)}h)",
+                    "detail": "Pense à renouveler avant 72h pour éviter l'interruption de génération.",
+                })
+        except Exception:
+            pass
+
+    # 2. Stock runway par zone (full+grab_ready / cmds-30j de la zone)
+    accounts = rj(ACCOUNTS_F, [])
+    orders = rj(ORDERS_F, {}) or {}
+    now = datetime.datetime.now()
+    cutoff = now - datetime.timedelta(days=30)
+    cmds_30j = 0
+    if isinstance(orders, dict):
+        for o in orders.values():
+            try:
+                ts = datetime.datetime.strptime((o.get("created_at") or "")[:19], "%Y-%m-%dT%H:%M:%S")
+                if ts >= cutoff:
+                    cmds_30j += 1
+            except Exception:
+                pass
+
+    zone_field_status = {
+        "grab_th": "status",
+        "uber_au": "uber_au_status",
+        "uber_fr": "uber_fr_status",
+    }
+    zone_meta = {
+        "grab_th": ("🇹🇭 Grab Thaïlande", "grab_th"),
+        "uber_au": ("🇦🇺 Uber AU", "uber_au"),
+        "uber_fr": ("🇫🇷 Uber FR", "uber_fr"),
+    }
+    for zkey, (label, qs) in zone_meta.items():
+        sf = zone_field_status[zkey]
+        ready = sum(1 for a in accounts if a.get(sf) in ("full", "grab_ready"))
+        # Daily rate (zone-blind pour l'instant — affinage quand orders.zone existera)
+        daily = max(cmds_30j / 30.0, 0.01) if zkey == "grab_th" else 0.01
+        runway_days = ready / daily if daily > 0 else 999
+        if zkey == "grab_th" and ready < 5:
+            out.append({
+                "id": f"stock_low_{zkey}", "severity": "error" if ready < 2 else "warn",
+                "title": f"{label} — stock critique ({ready} comptes prêts)",
+                "detail": f"Runway estimé : {runway_days:.1f} jours. Génère + signup d'urgence.",
+            })
+
+    # 3. Bot Telegram offline (best-effort, ne pas faire trop d'appels)
+    if BOT_TOKEN:
+        try:
+            r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=3)
+            if not r.json().get("ok"):
+                out.append({"id": "bot_offline", "severity": "error",
+                            "title": "Bot Telegram hors ligne",
+                            "detail": "L'API getMe a échoué. Check `systemctl status grabdiscount`."})
+        except Exception:
+            out.append({"id": "bot_unreachable", "severity": "warn",
+                        "title": "Bot Telegram injoignable (timeout)",
+                        "detail": "Vérifie le réseau VPS ou la clef BOT_TOKEN."})
+
+    # 4. Comptes failed récents (par zone)
+    for zkey, sf in zone_field_status.items():
+        nb = sum(1 for a in accounts if a.get(sf) == "failed")
+        if nb >= 3:
+            label = zone_meta[zkey][0]
+            out.append({
+                "id": f"failed_{zkey}", "severity": "warn",
+                "title": f"{label} — {nb} comptes en échec",
+                "detail": "Probable problème signup récurrent. Reset puis réessaie ou investigue.",
+            })
+
+    # 5. Hors horaire mais demande client (10h-00h)
+    h = now.hour
+    if h < 10 or h == 0:
+        out.append({
+            "id": "off_hours", "severity": "info",
+            "title": f"Hors horaire de service (il est {now.strftime('%H:%M')})",
+            "detail": "Service ouvert 10h–00h. Bot doit afficher fermé aux clients.",
+        })
+
+    # 6. Quota iCloud HME épuisé
+    q = icloud_quota()
+    if q["remaining"] == 0:
+        out.append({
+            "id": "icloud_quota_exhausted", "severity": "warn",
+            "title": "Quota iCloud HME épuisé pour la session",
+            "detail": f"Reset dans {q['reset']}. Apple limite ~5 emails / 24h.",
+        })
+
+    return out
+
+
+@app.route("/api/alerts")
+@auth
+def api_alerts():
+    """Liste des alertes actives — utilisée par la cloche du topbar.
+
+    Retour :
+      { alerts: [...], counts: {error, warn, info, total} }
+    """
+    alerts = _alerts_payload()
+    counts = {"error": 0, "warn": 0, "info": 0}
+    for a in alerts:
+        s = a.get("severity", "info")
+        counts[s] = counts.get(s, 0) + 1
+    counts["total"] = len(alerts)
+    return jsonify({"ok": True, "alerts": alerts, "counts": counts})
+
 
 @app.route("/api/cookie/upload", methods=["POST"])
 @auth
@@ -462,17 +704,30 @@ def api_accounts():
 @app.route("/api/packs")
 @auth
 def api_packs():
-    """
-    Retourne la liste des packs identité :
-    1 pack = 1 email iCloud + 1 identité française + 1 adresse Bangkok + SMS attribué.
-    Les identités sont générées de façon déterministe (seed = email).
+    """Liste des packs identité, avec les 3 zones de service par compte.
+
+    1 pack = 1 email iCloud + 1 identité française partagée + 3 adresses
+    indépendantes (TH/AU/FR) + 3 statuts indépendants (= 3 comptes potentiels
+    par identité, un sur chaque plateforme/pays).
+
+    Identités et adresses générées de façon déterministe (seed = email).
+    Le sort tient compte de la zone active si fournie en query string `?zone=`.
     """
     import sys as _sys
     _sys.path.insert(0, str(BASE))
     try:
-        from identity_gen import generate_identity, get_bangkok_address
+        from identity_gen import (
+            generate_identity,
+            get_bangkok_address,
+            get_australia_address,
+            get_france_address,
+        )
     except ImportError:
         return jsonify({"ok": False, "msg": "identity_gen non installé", "packs": []})
+
+    active_zone = (request.args.get("zone") or "grab_th").strip()
+    if active_zone not in ("grab_th", "uber_au", "uber_fr"):
+        active_zone = "grab_th"
 
     accounts = rj(ACCOUNTS_F, [])
     packs = []
@@ -480,51 +735,161 @@ def api_packs():
         email = a.get("email", "")
         if not email:
             continue
-        # Identité déterministe (même résultat à chaque appel)
         try:
-            ident   = generate_identity(seed=email)
-            addr    = get_bangkok_address(seed=email)
+            ident = generate_identity(seed=email)
         except Exception:
             ident = {"prenom": "?", "nom": "?", "full_name": "?"}
-            addr  = "?"
+
+        # Adresses : on lit le champ stocké, sinon on génère à la volée (idempotent)
+        try:
+            addr_th = a.get("grab_bangkok_addr") or get_bangkok_address(seed=email)
+            addr_au = a.get("uber_au_address")   or get_australia_address(seed=email)
+            addr_fr = a.get("uber_fr_address")   or get_france_address(seed=email)
+        except Exception:
+            addr_th = a.get("grab_bangkok_addr", "")
+            addr_au = a.get("uber_au_address", "")
+            addr_fr = a.get("uber_fr_address", "")
+
+        zones = {
+            "grab_th": {
+                "address":     addr_th,
+                "phone":       a.get("grab_phone", ""),
+                "status":      a.get("status", "available"),
+                "notes":       a.get("grab_notes", ""),
+                "used_at":     a.get("used_at"),
+                "fail_count":  a.get("_fail_count", 0),
+                "last_error":  a.get("_last_error", ""),
+            },
+            "uber_au": {
+                "address":     addr_au,
+                "phone":       a.get("uber_au_phone", ""),
+                "status":      a.get("uber_au_status", "available"),
+                "notes":       a.get("uber_au_notes", ""),
+                "used_at":     a.get("uber_au_used_at"),
+                "fail_count":  a.get("uber_au_fail_count", 0),
+                "last_error":  a.get("uber_au_last_error", ""),
+            },
+            "uber_fr": {
+                "address":     addr_fr,
+                "phone":       a.get("uber_fr_phone", ""),
+                "status":      a.get("uber_fr_status", "available"),
+                "notes":       a.get("uber_fr_notes", ""),
+                "used_at":     a.get("uber_fr_used_at"),
+                "fail_count":  a.get("uber_fr_fail_count", 0),
+                "last_error":  a.get("uber_fr_last_error", ""),
+            },
+        }
+
+        # Compat ascendante : top-level reflète la zone active (mais le code
+        # frontal lit zones[active] directement).
+        active = zones[active_zone]
 
         packs.append({
             "email":        email,
-            "status":       a.get("status", "available"),
             "prenom":       a.get("grab_prenom") or ident.get("prenom", ""),
             "nom":          a.get("grab_nom")    or ident.get("nom", ""),
             "full_name":    a.get("grab_name")   or ident.get("full_name", ""),
-            "bangkok_addr": a.get("grab_bangkok_addr") or addr,
-            "phone":        a.get("grab_phone", ""),
             "password":     a.get("grab_password", ""),
             "created_at":   a.get("created", ""),
             "grab_created": a.get("grab_created", ""),
+            "zones":        zones,
+            # ─── Champs flat pour compat zone active ──────────────────
+            "status":       active["status"],
+            "bangkok_addr": addr_th,  # historique — toujours = TH
+            "address":      active["address"],
+            "phone":        active["phone"],
             "_locked":      a.get("_locked", False),
-            "_fail_count":  a.get("_fail_count", 0),
-            "_last_error":  a.get("_last_error", ""),
+            "_fail_count":  active["fail_count"],
+            "_last_error":  active["last_error"],
         })
 
-    # Tri : grab_ready en premier, puis available, puis failed
-    order = {"grab_ready": 0, "available": 1, "failed": 3}
-    packs.sort(key=lambda p: order.get(p["status"], 2))
-    return jsonify({"ok": True, "packs": packs, "total": len(packs)})
+    # Tri : grab_ready / full d'abord, available ensuite, failed à la fin (zone active)
+    order = {"grab_ready": 0, "full": 0, "available": 1, "en_cours": 2, "used": 3, "failed": 4}
+    packs.sort(key=lambda p: (order.get(p["status"], 5), p["email"]))
+
+    # Compteurs globaux par zone (pour les badges des onglets)
+    zone_counts = {
+        "grab_th": {}, "uber_au": {}, "uber_fr": {},
+    }
+    for p in packs:
+        for z, info in p["zones"].items():
+            s = info["status"]
+            zone_counts[z][s] = zone_counts[z].get(s, 0) + 1
+        zone_counts["grab_th"]["_total"] = zone_counts["grab_th"].get("_total", 0) + 1
+        zone_counts["uber_au"]["_total"] = zone_counts["uber_au"].get("_total", 0) + 1
+        zone_counts["uber_fr"]["_total"] = zone_counts["uber_fr"].get("_total", 0) + 1
+
+    return jsonify({
+        "ok": True,
+        "packs": packs,
+        "total": len(packs),
+        "active_zone": active_zone,
+        "zone_counts": zone_counts,
+    })
+
+
+# Mapping logique → champs JSON par zone (cf. app/storage/zones.py).
+_ZONE_FIELDS = {
+    "grab_th": {
+        "status":  "status",
+        "phone":   "grab_phone",
+        "notes":   "grab_notes",
+        "used_at": "used_at",
+        "fail":    "_fail_count",
+        "err":     "_last_error",
+    },
+    "uber_au": {
+        "status":  "uber_au_status",
+        "phone":   "uber_au_phone",
+        "notes":   "uber_au_notes",
+        "used_at": "uber_au_used_at",
+        "fail":    "uber_au_fail_count",
+        "err":     "uber_au_last_error",
+    },
+    "uber_fr": {
+        "status":  "uber_fr_status",
+        "phone":   "uber_fr_phone",
+        "notes":   "uber_fr_notes",
+        "used_at": "uber_fr_used_at",
+        "fail":    "uber_fr_fail_count",
+        "err":     "uber_fr_last_error",
+    },
+}
+
+
+def _zone_field(zone: str, logical: str) -> str:
+    """Résout le nom de champ JSON pour (zone, logical_name)."""
+    return _ZONE_FIELDS.get(zone, _ZONE_FIELDS["grab_th"])[logical]
 
 
 @app.route("/api/accounts/update", methods=["POST"])
 @auth
 def api_accounts_update():
     d = request.json or {}
+    zone = (d.get("zone") or "grab_th").strip()
+    if zone not in _ZONE_FIELDS:
+        zone = "grab_th"
+    f = _ZONE_FIELDS[zone]
+
     accounts = rj(ACCOUNTS_F, [])
     for a in accounts:
         if a["email"] == d.get("email"):
-            a["status"]      = d.get("status", a["status"])
-            a["grab_phone"]  = d.get("grab_phone", a.get("grab_phone",""))
-            a["grab_notes"]  = d.get("grab_notes", a.get("grab_notes",""))
-            if d.get("status") == "used" and not a.get("used_at"):
-                a["used_at"] = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-            elif d.get("status") == "available":
-                a["used_at"] = None
+            if "status" in d:
+                a[f["status"]] = d["status"]
+            # `grab_phone` reste accepté en plus de `phone` pour compat ascendante
+            if d.get("phone") is not None:
+                a[f["phone"]] = d["phone"]
+            elif "grab_phone" in d:
+                a[f["phone"]] = d["grab_phone"]
+            if "notes" in d or "grab_notes" in d:
+                a[f["notes"]] = d.get("notes", d.get("grab_notes", ""))
+            new_status = d.get("status")
+            if new_status == "used" and not a.get(f["used_at"]):
+                a[f["used_at"]] = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            elif new_status == "available":
+                a[f["used_at"]] = None
     wj(ACCOUNTS_F, accounts)
+    _audit("account_update", email=d.get("email"), zone=zone, status=d.get("status"))
     return jsonify({"ok": True})
 
 @app.route("/api/packs/mark_created", methods=["POST"])
@@ -573,43 +938,56 @@ def api_packs_mark_created():
 @app.route("/api/packs/set_phone", methods=["POST"])
 @auth
 def api_packs_set_phone():
-    """Assigne manuellement un numéro de téléphone à un compte."""
+    """Assigne manuellement un numéro de téléphone à un compte (zone-aware)."""
     d = request.json or {}
     email = (d.get("email") or "").strip()
     phone = (d.get("phone") or "").strip()
+    zone  = (d.get("zone")  or "grab_th").strip()
+    if zone not in _ZONE_FIELDS:
+        zone = "grab_th"
+    f = _ZONE_FIELDS[zone]
     if not email:
         return jsonify({"ok": False, "msg": "email requis"})
     accounts = rj(ACCOUNTS_F, [])
     found = False
     for a in accounts:
         if a.get("email") == email:
-            a["grab_phone"] = phone
-            if phone and a.get("status") in ("available", None, ""):
-                a["status"] = "full"
-            elif not phone and a.get("status") == "full":
-                a["status"] = "available"
+            a[f["phone"]] = phone
+            cur = a.get(f["status"], "available")
+            if phone and cur in ("available", None, ""):
+                a[f["status"]] = "full"
+            elif not phone and cur == "full":
+                a[f["status"]] = "available"
             found = True
             break
     if not found:
         return jsonify({"ok": False, "msg": "Compte non trouvé"})
     wj(ACCOUNTS_F, accounts)
+    _audit("set_phone", email=email, zone=zone, has_phone=bool(phone))
     return jsonify({"ok": True})
 
 
 @app.route("/api/packs/reset_failed", methods=["POST"])
 @auth
 def api_packs_reset_failed():
-    """Remet tous les comptes failed en available."""
+    """Remet en `available` tous les comptes `failed` de la zone donnée."""
+    d = request.json or {}
+    zone = (d.get("zone") or "grab_th").strip()
+    if zone not in _ZONE_FIELDS:
+        zone = "grab_th"
+    f = _ZONE_FIELDS[zone]
+
     accounts = rj(ACCOUNTS_F, [])
     reset = 0
     for a in accounts:
-        if a.get("status") == "failed":
-            a["status"]      = "available"
-            a["_fail_count"] = 0
-            a.pop("_last_error", None)
+        if a.get(f["status"]) == "failed":
+            a[f["status"]] = "available"
+            a[f["fail"]]   = 0
+            a.pop(f["err"], None)
             reset += 1
     wj(ACCOUNTS_F, accounts)
-    return jsonify({"ok": True, "reset": reset})
+    _audit("reset_failed", zone=zone, count=reset)
+    return jsonify({"ok": True, "reset": reset, "zone": zone})
 
 
 @app.route("/api/generate/status")
@@ -1738,7 +2116,14 @@ button:hover{background:#009940;transform:translateY(-1px)}
 </style></head><body>
 <div class="box"><div class="logo">🛵</div><h1>GrabDiscount</h1><div class="sub">Tableau de bord admin</div>
 {% if err %}<div class="err">{{ err }}</div>{% endif %}
-<form method="POST"><input type="password" name="pwd" placeholder="Mot de passe" autofocus><button>Accéder au QG →</button></form>
+<form method="POST">
+  <input type="password" name="pwd" placeholder="Mot de passe" autofocus>
+  {% if totp_required %}
+  <input type="text" name="totp" placeholder="Code 2FA (6 chiffres)" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" style="letter-spacing:.4em;text-align:center;font-family:monospace;font-size:1.15rem">
+  {% endif %}
+  <button>Accéder au QG →</button>
+</form>
+{% if totp_required %}<div class="sub" style="margin-top:18px;font-size:.75rem">🔐 2FA TOTP actif — utilise Authy / Google Authenticator</div>{% endif %}
 </div></body></html>"""
 
 DASH = """<!DOCTYPE html>
@@ -2000,6 +2385,9 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 <!-- MAIN -->
 <div class="main">
 
+  <!-- ALERTES PROACTIVES (banner global) -->
+  <div id="alertsBar" style="display:none;flex-shrink:0;border-bottom:1px solid var(--s3)"></div>
+
   <!-- OVERVIEW -->
   <div id="page-overview" class="content" style="padding-top:24px">
     <div class="grid-4">
@@ -2100,7 +2488,7 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
   <!-- ACCOUNTS -->
   <div id="page-accounts" style="display:none;flex-direction:column;height:100%;overflow:hidden">
     <div class="topbar">
-      <span class="page-title">🏭 Usine Grab — Packs Identité</span>
+      <span class="page-title" id="acc-title">🏭 Usine — Packs Identité</span>
       <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
         <button class="btn btn-secondary" onclick="openGenModal()">⚡ + Emails</button>
         <span style="font-size:.75rem;color:var(--t3);background:var(--s2);padding:6px 10px;border-radius:8px" title="Nécessite un téléphone Android branché — non disponible sur VPS">📱 Usine Android : non dispo sur VPS</span>
@@ -2108,19 +2496,42 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
     </div>
     <div class="content" style="flex:1;overflow-y:auto">
 
-      <!-- 3 compteurs top -->
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
+      <!-- Onglets Zone (Grab TH / Uber AU / Uber FR) -->
+      <div id="zoneTabs" style="display:flex;gap:6px;margin-bottom:14px;background:var(--s1);padding:6px;border-radius:14px;border:1px solid var(--s3)">
+        <button class="zone-tab active" data-zone="grab_th" onclick="setZone('grab_th')"
+          style="flex:1;padding:10px 14px;border:0;border-radius:10px;background:var(--s3);color:var(--t1);cursor:pointer;font-weight:600;font-size:.85rem;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s">
+          <span>🇹🇭</span><span>Grab Thaïlande</span>
+          <span class="pill" id="zb-grab_th" style="background:#0d111766;color:var(--t2);font-size:.7rem;padding:2px 8px">—</span>
+        </button>
+        <button class="zone-tab" data-zone="uber_au" onclick="setZone('uber_au')"
+          style="flex:1;padding:10px 14px;border:0;border-radius:10px;background:transparent;color:var(--t2);cursor:pointer;font-weight:600;font-size:.85rem;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s">
+          <span>🇦🇺</span><span>Uber Eats Australie</span>
+          <span class="pill" id="zb-uber_au" style="background:#0d111766;color:var(--t3);font-size:.7rem;padding:2px 8px">—</span>
+        </button>
+        <button class="zone-tab" data-zone="uber_fr" onclick="setZone('uber_fr')"
+          style="flex:1;padding:10px 14px;border:0;border-radius:10px;background:transparent;color:var(--t2);cursor:pointer;font-weight:600;font-size:.85rem;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s">
+          <span>🇫🇷</span><span>Uber Eats France</span>
+          <span class="pill" id="zb-uber_fr" style="background:#0d111766;color:var(--t3);font-size:.7rem;padding:2px 8px">—</span>
+        </button>
+      </div>
+
+      <!-- 4 compteurs top (zone-aware) -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px">
         <div class="card" style="padding:16px 20px;text-align:center">
           <div style="font-size:2rem;font-weight:800;color:var(--orange)" id="packsDispo">—</div>
-          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Sans numéro</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">📧 Sans numéro</div>
         </div>
         <div class="card" style="padding:16px 20px;text-align:center">
           <div style="font-size:2rem;font-weight:800;color:var(--green)" id="packsEnCours">—</div>
-          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Comptes full</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">✅ Comptes full</div>
         </div>
         <div class="card" style="padding:16px 20px;text-align:center">
           <div style="font-size:2rem;font-weight:800;color:var(--purple)" id="packsReady">—</div>
-          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">Utilisés</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">✓ Utilisés</div>
+        </div>
+        <div class="card" style="padding:16px 20px;text-align:center">
+          <div style="font-size:2rem;font-weight:800;color:var(--cyan)" id="packsRunway">—</div>
+          <div style="font-size:.78rem;color:var(--t3);margin-top:2px">📅 Runway (jours)</div>
         </div>
       </div>
 
@@ -2164,9 +2575,9 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
       <!-- Tableau des packs -->
       <div class="table-wrap">
         <div class="table-header">
-          <span class="table-title">📦 Packs prêts à inscrire — 1 email = 1 identité = 1 compte</span>
+          <span class="table-title" id="packsTableTitle">📦 Packs Grab Thaïlande — 1 compte = 1 commande</span>
           <span class="pill pill-green" id="packCount" style="margin-left:8px">0</span>
-          <button class="btn btn-secondary btn-sm" style="margin-left:auto;font-size:.75rem" onclick="resetFailed()" title="Remettre les comptes en échec en disponible">🔄 Reset failed</button>
+          <button class="btn btn-secondary btn-sm" style="margin-left:auto;font-size:.75rem" onclick="resetFailed()" title="Remettre les comptes en échec en disponible (zone active)">🔄 Reset failed</button>
         </div>
         <table>
           <thead>
@@ -2174,7 +2585,7 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
               <th style="width:24px"></th>
               <th>Email iCloud</th>
               <th>Identité + MDP</th>
-              <th>Adresse Bangkok</th>
+              <th id="packsAddrCol">📍 Adresse Bangkok</th>
               <th>Statut</th>
               <th style="width:120px">Actions</th>
             </tr>
@@ -2304,6 +2715,12 @@ tr:hover td{background:var(--s3)30;cursor:pointer}
 // ── STATE ─────────────────────────────────────────────────
 let _orders={}, _msgs={}, _accounts=[], _filter='all', _activeChat=null, _revenueChart=null;
 let _packs=[], _packsFilter='all', _packsSearch='', _accountsPage=0, _accountsPerPage=20;
+let _zone='grab_th';  // zone active : grab_th | uber_au | uber_fr
+const _zoneMeta={
+  grab_th:{flag:'🇹🇭',name:'Grab Thaïlande',  city:'Bangkok',   phonePlaceholder:'+66XXXXXXXXX',title:'🏭 Usine — Grab Thaïlande'},
+  uber_au:{flag:'🇦🇺',name:'Uber Eats Australie',city:'Australie', phonePlaceholder:'+614XXXXXXXX',title:'🏭 Usine — Uber Eats Australie'},
+  uber_fr:{flag:'🇫🇷',name:'Uber Eats France', city:'France',    phonePlaceholder:'+336XXXXXXXX',title:'🏭 Usine — Uber Eats France'},
+};
 const STATUT = {
   'en_attente_confirmation': {label:'En attente',    cls:'pill-gray'},
   'en_attente_paiement':     {label:'💳 Paiement',  cls:'pill-orange'},
@@ -2763,23 +3180,118 @@ async function uploadCookie(input){
   input.value='';
 }
 
+// ── ALERTES PROACTIVES ────────────────────────────────────
+let _alertsExpanded=false;
+async function loadAlerts(){
+  try{
+    const r=await fetch('/api/alerts');
+    const d=await r.json();
+    const bar=$('alertsBar');
+    if(!bar) return;
+    const alerts=d.alerts||[];
+    if(alerts.length===0){ bar.style.display='none'; return; }
+    bar.style.display='block';
+    const sevColor={error:'#ef4444',warn:'#f59e0b',info:'#06b6d4'};
+    const sevIcon={error:'🚨',warn:'⚠️',info:'ℹ️'};
+    // Tri : error > warn > info
+    const order={error:0,warn:1,info:2};
+    alerts.sort((a,b)=>(order[a.severity]||3)-(order[b.severity]||3));
+    const top=alerts[0];
+    const more=alerts.length-1;
+    const sev=top.severity||'info';
+    const head=`
+      <div style="background:linear-gradient(90deg,${sevColor[sev]}22,${sevColor[sev]}08);padding:10px 24px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="toggleAlerts()">
+        <span style="font-size:1.2rem">${sevIcon[sev]}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;color:var(--t1);font-size:.85rem">${escHtml(top.title)}</div>
+          <div style="font-size:.75rem;color:var(--t2);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(top.detail||'')}</div>
+        </div>
+        ${more>0?`<span class="pill" style="background:${sevColor[sev]}33;color:${sevColor[sev]};font-weight:700">+${more} autre${more>1?'s':''}</span>`:''}
+        <span style="color:var(--t3);font-size:.85rem">${_alertsExpanded?'▲':'▼'}</span>
+      </div>`;
+    let detail='';
+    if(_alertsExpanded){
+      detail=`<div style="padding:8px 24px 14px;background:var(--s2);border-top:1px solid var(--s3)">`
+        + alerts.slice(1).map(a=>{
+            const c=sevColor[a.severity||'info'];
+            return `<div style="display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--s3)">
+              <span style="font-size:1rem">${sevIcon[a.severity||'info']}</span>
+              <div style="flex:1">
+                <div style="font-weight:600;color:var(--t1);font-size:.82rem">${escHtml(a.title)}</div>
+                <div style="font-size:.74rem;color:var(--t2);margin-top:2px">${escHtml(a.detail||'')}</div>
+              </div>
+            </div>`;
+          }).join('')
+        + `</div>`;
+    }
+    bar.innerHTML=head+detail;
+  }catch(e){ /* silent */ }
+}
+function toggleAlerts(){ _alertsExpanded=!_alertsExpanded; loadAlerts(); }
+let _alertsPoll=null;
+function startAlertsPoll(){
+  if(_alertsPoll) return;
+  loadAlerts();
+  _alertsPoll=setInterval(loadAlerts,30000);
+}
+
 // ── ACCOUNTS ──────────────────────────────────────────────
 async function loadAccounts(){
   await loadPacks();
 }
 
+// ── Zone helpers (lecture des champs par zone active) ──────
+function _zd(p){ return (p.zones && p.zones[_zone]) ? p.zones[_zone] : {}; }
+function _zStatus(p){ return _zd(p).status || 'available'; }
+function _zPhone(p){  return _zd(p).phone  || ''; }
+function _zAddr(p){   return _zd(p).address|| ''; }
+function _zFail(p){   return _zd(p).fail_count|| 0; }
+function _zErr(p){    return _zd(p).last_error || ''; }
+
+function setZone(z){
+  if(!_zoneMeta[z]) return;
+  _zone=z;
+  // UI : toggle des onglets
+  document.querySelectorAll('.zone-tab').forEach(b=>{
+    const active=b.dataset.zone===z;
+    b.classList.toggle('active',active);
+    b.style.background=active?'var(--s3)':'transparent';
+    b.style.color=active?'var(--t1)':'var(--t2)';
+  });
+  // Titre + colonne adresse + reset filtre
+  const meta=_zoneMeta[z];
+  const t=$('acc-title'); if(t) t.textContent=meta.title;
+  const tt=$('packsTableTitle'); if(tt) tt.textContent=`📦 Packs ${meta.name} — 1 compte = 1 commande`;
+  const ac=$('packsAddrCol'); if(ac) ac.innerHTML=`📍 Adresse ${meta.city}`;
+  _accountsPage=0;
+  loadPacks();
+}
+
 async function loadPacks(){
   try{
-    const r=await fetch('/api/packs'); const d=await r.json();
+    const r=await fetch('/api/packs?zone='+encodeURIComponent(_zone));
+    const d=await r.json();
     _packs=d.packs||[];
-    // Compteurs globaux (sur tous les packs, pas filtrés)
-    const sansTel=_packs.filter(p=>p.status==='available').length;
-    const full=_packs.filter(p=>p.status==='full'||p.status==='grab_ready').length;
-    const used=_packs.filter(p=>p.status==='used').length;
+    // Compteurs zone active
+    const sansTel=_packs.filter(p=>_zStatus(p)==='available').length;
+    const full=_packs.filter(p=>{const s=_zStatus(p); return s==='full'||s==='grab_ready';}).length;
+    const used=_packs.filter(p=>_zStatus(p)==='used').length;
     if($('packsDispo'))  $('packsDispo').textContent=sansTel;
     if($('packsEnCours'))$('packsEnCours').textContent=full;
     if($('packsReady'))  $('packsReady').textContent=used;
     if($('packCount'))   $('packCount').textContent=_packs.length;
+    // Runway = stock full / cmds-jour-zone (placeholder = ∞ si 0 cmds)
+    const usedRecent=Math.max(used,1);  // approximation : cmds = utilisations
+    const runway=full>0 && usedRecent>0 ? Math.round(full/Math.max(usedRecent/30,0.1)) : '∞';
+    if($('packsRunway'))$('packsRunway').textContent=runway;
+    // Badges des onglets (zone_counts global toutes zones)
+    const zc=d.zone_counts||{};
+    Object.keys(_zoneMeta).forEach(z=>{
+      const el=$('zb-'+z); if(!el) return;
+      const c=zc[z]||{};
+      const ready=(c.full||0)+(c.grab_ready||0);
+      el.textContent=`${ready} / ${c._total||0}`;
+    });
     renderPacks();
   }catch(ex){
     const tbody=document.getElementById('packsTable');
@@ -2788,14 +3300,14 @@ async function loadPacks(){
 }
 function filteredPacks(){
   let packs=_packs;
-  if(_packsFilter!=='all') packs=packs.filter(p=>p.status===_packsFilter);
+  if(_packsFilter!=='all') packs=packs.filter(p=>_zStatus(p)===_packsFilter);
   const q=_packsSearch.toLowerCase();
   if(q) packs=packs.filter(p=>
     (p.email||'').toLowerCase().includes(q)||
     (p.full_name||'').toLowerCase().includes(q)||
     (p.prenom||'').toLowerCase().includes(q)||
     (p.nom||'').toLowerCase().includes(q)||
-    (p.bangkok_addr||'').toLowerCase().includes(q)
+    (_zAddr(p)).toLowerCase().includes(q)
   );
   return packs;
 }
@@ -2834,23 +3346,25 @@ function renderPacks(){
     'failed':    '<span class="pill pill-red">❌ Échoué</span>',
     'grab_ready':'<span class="pill" style="background:#05966922;color:#34d399;border:1px solid #05966944">✅ Compte full</span>',
   };
+  const phPlaceholder=_zoneMeta[_zone].phonePlaceholder;
   tbody.innerHTML=pagePacks.map(p=>{
     const e=escHtml(p.email||'');
     const emailRaw=p.email||'';
     const name=escHtml(p.full_name||`${p.prenom} ${p.nom}`);
     const nameRaw=p.full_name||`${p.prenom} ${p.nom}`;
-    const addrFull=p.bangkok_addr||'';
+    const addrFull=_zAddr(p);
     const addr=escHtml(addrFull.slice(0,50));
-    const phone=p.phone||'';
-    const pass='Grab2024lol!';
-    const status=p.status||'available';
+    const phone=_zPhone(p);
+    const pass=p.password||'Grab2024lol!';
+    const status=_zStatus(p);
     const badge=STATUS_PACK[status]||`<span class="pill">${status}</span>`;
-    const errTip=p._last_error?`title="${escHtml(p._last_error)}"`:''
-    const failBadge=p._fail_count>0?`<span style="color:var(--orange);font-size:.7rem;margin-left:4px" ${errTip}>⚠ ${p._fail_count}x</span>`:'';
+    const lastErr=_zErr(p);
+    const errTip=lastErr?`title="${escHtml(lastErr)}"`:''
+    const failBadge=_zFail(p)>0?`<span style="color:var(--orange);font-size:.7rem;margin-left:4px" ${errTip}>⚠ ${_zFail(p)}x</span>`:'';
     // Input phone inline (quand pas de numéro)
     const phoneInput = status !== 'used' && status !== 'full' && status !== 'grab_ready'
       ? `<div style="display:flex;gap:4px;margin-top:4px">
-           <input id="ph_${emailRaw.replace(/[@.]/g,'_')}" type="text" placeholder="+66XXXXXXXXX"
+           <input id="ph_${emailRaw.replace(/[@.]/g,'_')}" type="text" placeholder="${phPlaceholder}"
              style="width:130px;padding:4px 8px;border:1px solid var(--s3);border-radius:6px;background:var(--s1);color:var(--t1);font-size:.75rem"
              onkeydown="if(event.key==='Enter')savePhone('${emailRaw.replace(/'/g,"\\'")}')">
            <button class="btn btn-primary btn-sm" style="font-size:.7rem;padding:3px 8px;background:#3b82f6"
@@ -2901,20 +3415,20 @@ async function savePhone(email){
   const key='ph_'+email.replace(/[@.]/g,'_');
   const phone=document.getElementById(key)?.value.trim()||'';
   if(!phone){toast('⚠ Entre un numéro',false);return;}
-  const r=await fetch('/api/packs/set_phone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,phone})});
+  const r=await fetch('/api/packs/set_phone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,phone,zone:_zone})});
   const d=await r.json();
-  if(d.ok){toast('✅ Numéro enregistré — compte full !');await loadPacks();}
+  if(d.ok){toast(`✅ Numéro enregistré (${_zoneMeta[_zone].flag} ${_zoneMeta[_zone].name})`);await loadPacks();}
   else toast('❌ '+d.msg,false);
 }
 async function markUsed(email){
-  const r=await fetch('/api/accounts/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,status:'used'})});
+  const r=await fetch('/api/accounts/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,status:'used',zone:_zone})});
   const d=await r.json();
-  if(d.ok){toast('✓ Compte marqué utilisé');await loadPacks();}
+  if(d.ok){toast(`✓ Compte marqué utilisé (${_zoneMeta[_zone].flag})`);await loadPacks();}
 }
 async function resetFailed(){
-  const r=await fetch('/api/packs/reset_failed',{method:'POST'});
+  const r=await fetch('/api/packs/reset_failed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({zone:_zone})});
   const d=await r.json();
-  toast(`🔄 ${d.reset} comptes remis en disponible`);
+  toast(`🔄 ${d.reset} comptes remis en disponible (${_zoneMeta[_zone].flag})`);
   await loadPacks();
 }
 function copyEmail(e){navigator.clipboard.writeText(e);toast('📋 Email copié !');}
@@ -3141,6 +3655,7 @@ async function refreshAll(){
   window.nav = function(p){ _origNav(p); history.replaceState(null,'','#'+p); };
 })();
 refreshAll();
+startAlertsPoll();
 setInterval(refresh, 15000);
 setInterval(()=>{
   Promise.all([loadDispo(),loadBotStatus(),loadRestoCount()]);

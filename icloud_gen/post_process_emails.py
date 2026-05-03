@@ -23,7 +23,12 @@ ACCOUNTS_F  = Path(os.environ.get("DATA_DIR", str(GRAB_DIR))) / "accounts.json"
 
 # identity_gen est dans GRAB_DIR
 sys.path.insert(0, str(GRAB_DIR))
-from identity_gen import generate_identity, get_bangkok_address  # noqa: E402
+from identity_gen import (  # noqa: E402
+    generate_identity,
+    get_bangkok_address,
+    get_australia_address,
+    get_france_address,
+)
 
 
 def _read_accounts():
@@ -48,7 +53,7 @@ def _write_accounts(data):
 
 
 def _make_unique_identity(email: str, used_names: set) -> dict:
-    """Même logique que dashboard._make_unique_identity — garantit (prenom, nom) unique."""
+    """Génère identité française unique + 3 adresses (TH / AU / FR) déterministes par seed."""
     suffix = 0
     while True:
         seed = email if suffix == 0 else f"{email}_{suffix}"
@@ -56,12 +61,28 @@ def _make_unique_identity(email: str, used_names: set) -> dict:
         key = (ident["prenom"], ident["nom"])
         if key not in used_names or suffix > 100:
             used_names.add(key)
-            addr = get_bangkok_address(seed=seed)
             return {
                 "grab_prenom":       ident["prenom"],
                 "grab_nom":          ident["nom"],
                 "grab_name":         ident["full_name"],
-                "grab_bangkok_addr": addr,
+                # Zone Grab Thaïlande (legacy + champ historique)
+                "grab_bangkok_addr": get_bangkok_address(seed=seed),
+                # Zone Uber Eats Australie
+                "uber_au_address":         get_australia_address(seed=seed),
+                "uber_au_phone":           "",
+                "uber_au_status":          "available",
+                "uber_au_notes":           "",
+                "uber_au_used_at":         None,
+                "uber_au_phone_bought_at": None,
+                "uber_au_fail_count":      0,
+                # Zone Uber Eats France
+                "uber_fr_address":         get_france_address(seed=seed),
+                "uber_fr_phone":           "",
+                "uber_fr_status":          "available",
+                "uber_fr_notes":           "",
+                "uber_fr_used_at":         None,
+                "uber_fr_phone_bought_at": None,
+                "uber_fr_fail_count":      0,
             }
         suffix += 1
 
@@ -70,7 +91,7 @@ def _new_account(email: str, ts: str, used_names: set) -> dict:
     entry = {
         "email":      email,
         "created":    ts,
-        "status":     "available",
+        "status":     "available",  # statut zone Grab TH (legacy)
         "grab_phone": "",
         "grab_notes": "",
         "used_at":    None,

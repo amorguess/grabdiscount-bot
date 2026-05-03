@@ -87,7 +87,31 @@ _pending_referrals: dict[int, int] = _load_pending_referrals()
 #  ÉTATS
 # ──────────────────────────────────────────────────────────
 
-ATTENTE_COMMANDE, ATTENTE_ADRESSE = range(2)
+CHOIX_ZONE, ATTENTE_COMMANDE, ATTENTE_ADRESSE = range(3)
+
+# ── Zones de service (Grab Thaïlande / Uber AU / Uber FR) ──────────
+ZONE_META = {
+    "grab_th": {"flag": "🇹🇭", "label": "Grab Thaïlande", "platform": "Grab",
+                "city": "Bangkok",
+                "addr_field": "grab_bangkok_addr",
+                "phone_field":"grab_phone",     "status_field":"status",
+                "used_field": "used_at"},
+    "uber_au": {"flag": "🇦🇺", "label": "Uber Eats Australie", "platform": "Uber Eats",
+                "city": "Australie",
+                "addr_field": "uber_au_address",
+                "phone_field":"uber_au_phone",  "status_field":"uber_au_status",
+                "used_field": "uber_au_used_at"},
+    "uber_fr": {"flag": "🇫🇷", "label": "Uber Eats France", "platform": "Uber Eats",
+                "city": "France",
+                "addr_field": "uber_fr_address",
+                "phone_field":"uber_fr_phone",  "status_field":"uber_fr_status",
+                "used_field": "uber_fr_used_at"},
+}
+
+
+def _zfield(zone: str, name: str) -> str:
+    """Résout le nom de champ JSON pour (zone, logical_name)."""
+    return ZONE_META.get(zone, ZONE_META["grab_th"])[name + "_field"]
 
 # ──────────────────────────────────────────────────────────
 #  LOGS
@@ -410,29 +434,52 @@ def _write_json(path: str, data) -> None:
 #  COMPTES GRAB — auto-assignation
 # ──────────────────────────────────────────────────────────
 
-def _pick_account(order_id: str) -> dict | None:
-    """Prend le premier compte grab_ready/full disponible et le marque 'en_cours'."""
+def _pick_account(order_id: str, zone: str = "grab_th") -> dict | None:
+    """Prend le premier compte ready/full de la zone et le marque 'en_cours'.
+
+    Marqueur d'occupation = champ `order_id_<zone>` (séparé pour ne pas que
+    Grab TH et Uber FR se marchent dessus si un compte est utilisé sur les
+    deux zones simultanément).
+    """
+    sf = _zfield(zone, "status")
+    pf = _zfield(zone, "phone")
+    occ_key = f"order_id_{zone}"
     accounts = _read_json(ACCOUNTS_FILE, [])
     for i, acc in enumerate(accounts):
-        if acc.get("status") in ("grab_ready", "full") and acc.get("phone"):
-            accounts[i]["status"]   = "en_cours"
-            accounts[i]["order_id"] = order_id
+        if acc.get(sf) in ("grab_ready", "full") and acc.get(pf):
+            accounts[i][sf]      = "en_cours"
+            accounts[i][occ_key] = order_id
             try:
                 _write_json(ACCOUNTS_FILE, accounts)
             except Exception as e:
                 logger.error(f"_pick_account write: {e}")
+            # Inject zone for downstream formatting
+            acc["_zone"] = zone
             return acc
     return None
 
-def _release_account(order_id: str, new_status: str = "used") -> None:
-    """Marque le compte lié à order_id avec new_status."""
+def _release_account(order_id: str, new_status: str = "used", zone: str | None = None) -> None:
+    """Marque le compte lié à order_id avec new_status, sur la bonne zone.
+
+    Si `zone` est None : on scanne toutes les zones pour trouver le compte
+    occupé par cet order_id (compat appels depuis admin callback qui n'a pas
+    accès au context.user_data du client).
+    """
     accounts = _read_json(ACCOUNTS_FILE, [])
+    zones_to_try = [zone] if zone else list(ZONE_META.keys())
     changed = False
-    for i, acc in enumerate(accounts):
-        if acc.get("order_id") == order_id and acc.get("status") == "en_cours":
-            accounts[i]["status"]   = new_status
-            accounts[i]["order_id"] = None
-            changed = True
+    for z in zones_to_try:
+        sf = _zfield(z, "status")
+        occ_key = f"order_id_{z}"
+        for i, acc in enumerate(accounts):
+            if acc.get(occ_key) == order_id and acc.get(sf) == "en_cours":
+                accounts[i][sf]      = new_status
+                accounts[i][occ_key] = None
+                if new_status == "used":
+                    accounts[i][_zfield(z, "used")] = now_ts()
+                changed = True
+                break
+        if changed:
             break
     if changed:
         try:
@@ -440,17 +487,19 @@ def _release_account(order_id: str, new_status: str = "used") -> None:
         except Exception as e:
             logger.error(f"_release_account write: {e}")
 
-def _fmt_account(acc: dict) -> str:
-    """Formate les infos du compte pour l'admin (Markdown)."""
+def _fmt_account(acc: dict, zone: str = "grab_th") -> str:
+    """Formate les infos du compte pour l'admin (Markdown), zone-aware."""
+    z = acc.get("_zone", zone)
+    meta = ZONE_META.get(z, ZONE_META["grab_th"])
     email  = acc.get("email", "?")
     name   = acc.get("grab_name") or (
-        (acc.get("prenom", "") + " " + acc.get("nom", "")).strip()
+        (acc.get("grab_prenom", "") + " " + acc.get("grab_nom", "")).strip()
     ) or "?"
-    phone  = acc.get("phone", "?")
-    addr   = acc.get("grab_bangkok_addr") or acc.get("bangkok_addr", "?")
+    phone  = acc.get(meta["phone_field"]) or "?"
+    addr   = acc.get(meta["addr_field"]) or "?"
     return (
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📱 *Compte Grab assigné :*\n"
+        f"{meta['flag']} *Compte {meta['platform']} assigné :*\n"
         f"📧 Email   : `{email}`\n"
         f"👤 Nom     : `{name}`\n"
         f"📞 Tél     : `{phone}`\n"
@@ -582,10 +631,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     context.user_data["order_id"] = gen_order_id()
 
-    keyboard = [[
-        InlineKeyboardButton("🛒  Ouvrir Grab", web_app=WebAppInfo(url=WEBAPP_URL))
-    ]]
-
     # Ligne d'usage mensuel pour abonnés non-admin
     usage_line = ""
     if user.id != ADMIN_CHAT_ID:
@@ -596,17 +641,64 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             restantes = max(0, cap - used)
             usage_line = f"🥢 Legacy — *{restantes}/{cap}* commande(s) restantes\n\n"
 
+    # Étape 1 : choix de la zone
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇹🇭  Thaïlande (Grab)", callback_data="zone:grab_th")],
+        [InlineKeyboardButton("🇦🇺  Australie (Uber Eats)", callback_data="zone:uber_au")],
+        [InlineKeyboardButton("🇫🇷  France (Uber Eats)",    callback_data="zone:uber_fr")],
+    ])
+
     await update.message.reply_text(
-        "🛵 *GrabDiscount* — Livraison -50% Thaïlande\n\n"
+        "🛵 *GrabDiscount* — Livraison -50%\n\n"
         f"{usage_line}"
-        "Comment commander :\n"
-        "1️⃣ Ouvre Grab et choisis ton restaurant\n"
-        "2️⃣ Prends un *screenshot de ton panier*\n"
-        "3️⃣ Envoie-le ici + ton adresse\n"
-        "4️⃣ On passe la commande pour toi 🍽️\n\n"
-        "🕙 Service de *10h à 00h*\n"
+        "🌍 *Tu commandes où aujourd'hui ?*\n\n"
+        "🇹🇭 Thaïlande → Grab Food (Bangkok)\n"
+        "🇦🇺 Australie → Uber Eats\n"
+        "🇫🇷 France → Uber Eats\n\n"
+        "🕙 Service de *10h à 00h*",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+    return CHOIX_ZONE
+
+
+async def choisir_zone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Callback du choix de zone — stocke la zone et demande le screenshot."""
+    q = update.callback_query
+    await q.answer()
+    data = (q.data or "").split(":", 1)
+    zone = data[1] if len(data) == 2 else "grab_th"
+    if zone not in ZONE_META:
+        zone = "grab_th"
+    context.user_data["zone"] = zone
+    meta = ZONE_META[zone]
+
+    if zone == "grab_th":
+        keyboard = [[
+            InlineKeyboardButton("🛒  Ouvrir Grab", web_app=WebAppInfo(url=WEBAPP_URL))
+        ]]
+        instructions = (
+            f"Comment commander sur *{meta['platform']} {meta['flag']}* :\n"
+            "1️⃣ Ouvre Grab et choisis ton restaurant\n"
+            "2️⃣ Prends un *screenshot de ton panier*\n"
+            "3️⃣ Envoie-le ici + ton adresse de livraison"
+        )
+    else:
+        keyboard = [[
+            InlineKeyboardButton("🛒  Ouvrir Uber Eats", url="https://www.ubereats.com/")
+        ]]
+        instructions = (
+            f"Comment commander sur *{meta['platform']} {meta['flag']}* :\n"
+            "1️⃣ Ouvre Uber Eats et choisis ton restaurant\n"
+            "2️⃣ Prends un *screenshot de ton panier*\n"
+            "3️⃣ Envoie-le ici + ton adresse de livraison"
+        )
+
+    await q.edit_message_text(
+        f"{meta['flag']} *{meta['label']}*\n\n"
+        f"{instructions}\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📸 *Envoie ton screenshot de panier Grab :*",
+        "📸 *Envoie ton screenshot de panier :*",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -642,19 +734,21 @@ async def recevoir_adresse(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user     = update.effective_user
     order_id = context.user_data.get("order_id", gen_order_id())
     photo_id = context.user_data.get("photo_file_id", "")
+    zone     = context.user_data.get("zone", "grab_th")
 
-    # Assigne un compte Grab disponible
-    acc = _pick_account(order_id)
+    # Assigne un compte de la zone choisie
+    acc = _pick_account(order_id, zone=zone)
 
     # Incrémente le compteur de commandes de l'abonné
     subscribers.increment_orders(user.id)
 
-    # Sauvegarde la commande
+    # Sauvegarde la commande (incluant la zone pour traçabilité analytics)
     sauvegarder_commande(order_id, user.id, {
         "nom":           user.full_name,
         "adresse":       adresse,
         "photo_file_id": photo_id,
         "account_email": acc.get("email", "") if acc else "",
+        "zone":          zone,
     }, statut="en_attente")
 
     # Confirmation au client
@@ -670,15 +764,17 @@ async def recevoir_adresse(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Notification admin
     username = f"@{user.username}" if user.username else "_(aucun)_"
-    account_block = _fmt_account(acc) if acc else (
+    zmeta = ZONE_META.get(zone, ZONE_META["grab_th"])
+    account_block = _fmt_account(acc, zone=zone) if acc else (
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚠️ *Aucun compte Grab disponible !*\n"
+        f"⚠️ *Aucun compte {zmeta['platform']} {zmeta['flag']} disponible !*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
     caption = (
-        "🆕 *NOUVELLE COMMANDE*\n"
+        f"🆕 *NOUVELLE COMMANDE* {zmeta['flag']}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🌍 Zone   : *{zmeta['label']}*\n"
         f"🆔 Réf    : `{order_id}`\n"
         f"⏰ Heure  : {now_str()}\n\n"
         f"👤 *{user.full_name}*  {username}\n"
@@ -1823,13 +1919,16 @@ def main() -> None:
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
+            CHOIX_ZONE: [
+                CallbackQueryHandler(choisir_zone, pattern=r"^zone:(grab_th|uber_au|uber_fr)$"),
+            ],
             ATTENTE_COMMANDE: [
                 MessageHandler(filters.PHOTO, recevoir_image),
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
                     lambda u, c: u.message.reply_text(
-                        "📸 *Envoie un screenshot de ton panier Grab.*\n\n"
-                        "_Ouvre Grab, mets tes articles dans le panier, puis prends une capture d'écran._",
+                        "📸 *Envoie un screenshot de ton panier.*\n\n"
+                        "_Ouvre l'app de livraison, mets tes articles dans le panier, puis prends une capture d'écran._",
                         parse_mode="Markdown"
                     )
                 ),
